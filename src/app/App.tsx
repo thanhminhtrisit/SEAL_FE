@@ -16,7 +16,7 @@ import { SCDashboard, EventApprovals, SCAnalytics, Disciplines, TermQuotas } fro
 // Coordinator screens
 import {
   CoordDashboard, EventList, CreateEventWizard, ParticipantApproval,
-  SubmissionMonitor, JudgeAssignment, TeamManagement,
+  SubmissionMonitor, JudgeAssignment, TeamManagement, AccountApprovalsPage,
 } from './screens/CoordinatorScreens';
 import {
   ScoringControl, RankingPage, AwardsPage, ResultPublication, RBLDashboard,
@@ -60,6 +60,7 @@ const breadcrumbs: Record<string, string[]> = {
   'coord-events': ['SEAL', 'Coordinator', 'My Events'],
   'coord-create': ['SEAL', 'Coordinator', 'Create Event'],
   'coord-participants': ['SEAL', 'Coordinator', 'Participant Approval'],
+  'coord-account-approvals': ['SEAL', 'Coordinator', 'Account Approvals'],
   'coord-teams': ['SEAL', 'Coordinator', 'Teams'],
   'coord-judges': ['SEAL', 'Coordinator', 'Judge Assignment'],
   'coord-submissions': ['SEAL', 'Coordinator', 'Submissions'],
@@ -233,6 +234,7 @@ function ScreenRenderer({ screen, role, onNavigate, onRoleLogin }: RendererProps
     case 'coord-events': return <EventList onNavigate={onNavigate} />;
     case 'coord-create': return <CreateEventWizard onNavigate={onNavigate} />;
     case 'coord-participants': return <ParticipantApproval />;
+    case 'coord-account-approvals': return <AccountApprovalsPage />;
     case 'coord-teams': return <TeamManagement />;
     case 'coord-judges': return <JudgeAssignment />;
     case 'coord-submissions': return <SubmissionMonitor />;
