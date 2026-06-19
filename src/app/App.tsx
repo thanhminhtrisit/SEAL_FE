@@ -19,7 +19,7 @@ import {
   SubmissionMonitor, JudgeAssignment, TeamManagement,
 } from './screens/CoordinatorScreens';
 import {
-  ScoringControl, RankingPage, AwardsPage, ResultPublication, RBLDashboard,
+  ScoringControl, RankingPage, ResultPublication, RBLDashboard,
 } from './screens/CoordinatorEventScreens';
 
 // Judge screens
@@ -41,6 +41,9 @@ import { ProfilePage, AccessDeniedPage } from './screens/SharedScreens';
 
 // Ranking screen (can be accessed by Coordinator and Super Coordinator)
 import { RankingScreen } from './screens/RankingScreen';
+
+//Award screen (can be accessed by Coordinator and Super Coordinator)
+import { AwardsPage } from './screens/AwardPage';
 
 // ── Breadcrumb map ────────────────────────────────────────────────────────────
 const breadcrumbs: Record<string, string[]> = {

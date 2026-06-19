@@ -19,6 +19,24 @@ export interface RankingResponse {
   isPromoted: boolean;
 }
 
+export interface AwardCreateRequest {
+  eventId: number;
+  teamId: number;
+  rankingId: number | null;
+  awardType: string;
+  description: string;
+}
+
+export interface AwardResponse {
+  awardId: number;
+  eventId: number;
+  teamId: number;
+  teamName: string;
+  awardType: string;
+  description: string;
+  awardedBy: number;
+  awardedAt: string;
+}
 
 export interface ApiResponse<T> {
   success: boolean;
