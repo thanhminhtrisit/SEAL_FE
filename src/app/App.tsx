@@ -39,6 +39,9 @@ import { TemplateCenter } from './screens/TemplateScreens';
 // Shared screens
 import { ProfilePage, AccessDeniedPage } from './screens/SharedScreens';
 
+// Ranking screen (can be accessed by Coordinator and Super Coordinator)
+import { RankingScreen } from './screens/RankingScreen';
+
 // ── Breadcrumb map ────────────────────────────────────────────────────────────
 const breadcrumbs: Record<string, string[]> = {
   landing: ['SEAL', 'Home'],
@@ -237,7 +240,13 @@ function ScreenRenderer({ screen, role, onNavigate, onRoleLogin }: RendererProps
     case 'coord-judges': return <JudgeAssignment />;
     case 'coord-submissions': return <SubmissionMonitor />;
     case 'coord-scoring': return <ScoringControl />;
-    case 'coord-ranking': return <RankingPage />;
+    case 'coord-ranking': 
+      return (
+        <RankingScreen 
+          roundId={1} // Tạm fix cứng vòng 1 để test khớp với Database
+          isCoordinator={role === 'EVENT_COORDINATOR' || role === 'SUPER_COORDINATOR' || role === 'ADMIN'} 
+        />
+      );
     case 'coord-awards': return <AwardsPage />;
     case 'coord-results': return <ResultPublication />;
     case 'coord-rbl': return <RBLDashboard />;
