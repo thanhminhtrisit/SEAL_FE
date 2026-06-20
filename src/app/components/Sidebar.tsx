@@ -80,6 +80,7 @@ const navConfig: Record<Role, NavSection[]> = {
     {
       title: 'Event Operations',
       items: [
+        { label: 'Account Approvals', icon: UserPlus, screen: 'coord-account-approvals' },
         { label: 'Participant Approval', icon: UserCheck, screen: 'coord-participants', badge: 7 },
         { label: 'Teams', icon: Users, screen: 'coord-teams' },
         { label: 'Judge Assignment', icon: Gavel, screen: 'coord-judges' },
