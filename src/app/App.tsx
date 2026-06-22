@@ -17,6 +17,7 @@ import { SCDashboard, EventApprovals, SCAnalytics, Disciplines, TermQuotas } fro
 import {
   CoordDashboard, EventList, CreateEventWizard, ParticipantApproval,
   SubmissionMonitor, JudgeAssignment, TeamManagement, AccountApprovalsPage,
+  EventDetailPage,
 } from './screens/CoordinatorScreens';
 import {
   ScoringControl, RankingPage, AwardsPage, ResultPublication, RBLDashboard,
@@ -61,6 +62,7 @@ const breadcrumbs: Record<string, string[]> = {
   'coord-create': ['SEAL', 'Coordinator', 'Create Event'],
   'coord-participants': ['SEAL', 'Coordinator', 'Participant Approval'],
   'coord-account-approvals': ['SEAL', 'Coordinator', 'Account Approvals'],
+  'coord-event-detail': ['SEAL', 'Coordinator', 'Event Detail'],
   'coord-teams': ['SEAL', 'Coordinator', 'Teams'],
   'coord-judges': ['SEAL', 'Coordinator', 'Judge Assignment'],
   'coord-submissions': ['SEAL', 'Coordinator', 'Submissions'],
@@ -143,6 +145,13 @@ export default function App() {
     setCurrentScreen('login');
   }, [auth]);
 
+  const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
+
+  const handleSelectEvent = useCallback((id: number) => {
+    setSelectedEventId(id);
+    setCurrentScreen('coord-event-detail');
+  }, []);
+
   // Public screens bypass the shell layout
   if (publicScreens.has(currentScreen)) {
     return (
@@ -196,6 +205,8 @@ export default function App() {
               role={currentRole}
               onNavigate={navigate}
               onRoleLogin={handleRoleLogin}
+              selectedEventId={selectedEventId}
+              onSelectEvent={handleSelectEvent}
             />
           </main>
         </div>
@@ -210,9 +221,11 @@ interface RendererProps {
   role: Role;
   onNavigate: (s: string) => void;
   onRoleLogin: (role: string) => void;
+  selectedEventId: number | null;
+  onSelectEvent: (id: number) => void;
 }
 
-function ScreenRenderer({ screen, role, onNavigate, onRoleLogin }: RendererProps) {
+function ScreenRenderer({ screen, role, onNavigate, onRoleLogin, selectedEventId, onSelectEvent }: RendererProps) {
   switch (screen) {
     // Admin
     case 'admin-dashboard': return <AdminDashboard />;
@@ -231,10 +244,13 @@ function ScreenRenderer({ screen, role, onNavigate, onRoleLogin }: RendererProps
 
     // Event Coordinator
     case 'coord-dashboard': return <CoordDashboard onNavigate={onNavigate} />;
-    case 'coord-events': return <EventList onNavigate={onNavigate} />;
+    case 'coord-events': return <EventList onNavigate={onNavigate} onSelectEvent={onSelectEvent} />;
     case 'coord-create': return <CreateEventWizard onNavigate={onNavigate} />;
     case 'coord-participants': return <ParticipantApproval />;
     case 'coord-account-approvals': return <AccountApprovalsPage />;
+    case 'coord-event-detail': return selectedEventId
+      ? <EventDetailPage eventId={selectedEventId} onNavigate={onNavigate} />
+      : <EventList onNavigate={onNavigate} onSelectEvent={onSelectEvent} />;
     case 'coord-teams': return <TeamManagement />;
     case 'coord-judges': return <JudgeAssignment />;
     case 'coord-submissions': return <SubmissionMonitor />;

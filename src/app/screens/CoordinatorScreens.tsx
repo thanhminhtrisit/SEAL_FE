@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Calendar, Plus, ChevronRight, CheckCircle2, Clock, AlertTriangle, Users, Send, Lock, Trophy, Globe, FileBarChart, Eye, Edit2, UserCheck, UserX, Search, Download, Check, BarChart2, GraduationCap, Building2, RefreshCw } from 'lucide-react';
+import { Calendar, Plus, ChevronRight, CheckCircle2, Clock, AlertTriangle, Users, Send, Lock, Trophy, Globe, FileBarChart, Eye, Edit2, UserCheck, UserX, Search, Download, Check, BarChart2, GraduationCap, Building2, RefreshCw, ArrowLeft, Layers, Tag, List } from 'lucide-react';
 import { toast } from 'sonner';
 import { KPICard } from '../components/shared/KPICard';
 import { StatusBadge } from '../components/shared/Badge';
@@ -10,6 +10,26 @@ import {
   rejectAccount,
   type PendingAccount,
 } from '../../api/accounts';
+import {
+  getEvents,
+  createEvent,
+  createRound,
+  createCategory,
+  createCriteriaSet,
+  createBudget,
+  createBudgetItem,
+  submitEvent,
+  getEvent,
+  getEventRounds,
+  getEventCategories,
+  getEventCriteriaSets,
+  type EventSummary,
+  type EventRound,
+  type EventCategory,
+  type CriteriaSet,
+  type EventType,
+} from '../../api/events';
+import { getDisciplines, getTermPlans, getBudgetCategories, type Discipline, type TermPlan, type BudgetCategory } from '../../api/governance';
 
 function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: React.ReactNode }) {
   return (
@@ -44,11 +64,6 @@ const lifecycleSteps = [
   { label: 'Archived', status: 'future', date: '—' },
 ];
 
-const myEvents = [
-  { id: 1, name: 'SEAL Software Engineering Hackathon Summer 2026', status: 'IN_PROGRESS', teams: 24, term: 'Summer 2026', createdDate: '2026-06-05' },
-  { id: 2, name: 'SE Mini Challenge Spring 2026', status: 'COMPLETED', teams: 18, term: 'Spring 2026', createdDate: '2026-02-10' },
-  { id: 3, name: 'SE Ideathon Fall 2025', status: 'ARCHIVED', teams: 22, term: 'Fall 2025', createdDate: '2025-09-01' },
-];
 
 const pendingParticipants = [
   { id: 1, name: 'Nguyen Thanh Phong', email: 'phong.nt@student.fpt.edu.vn', type: 'FPT Student', studentId: 'SE171234', appliedDate: '2026-06-21' },
@@ -165,61 +180,307 @@ export function CoordDashboard({ onNavigate }: { onNavigate: (s: string) => void
   );
 }
 
-export function EventList({ onNavigate }: { onNavigate: (s: string) => void }) {
+// ── Event List (real API) ─────────────────────────────────────────────────────
+interface EventListProps {
+  onNavigate: (s: string) => void;
+  onSelectEvent?: (id: number) => void;
+}
+
+export function EventList({ onNavigate, onSelectEvent }: EventListProps) {
+  const [events, setEvents] = useState<EventSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setEvents(await getEvents());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Không tải được danh sách event');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const fmtDate = (s: string | null) =>
+    s ? s.replace('T', ' ').slice(0, 16) : '—';
+
   return (
     <div className="p-7 space-y-5">
-      <PageHeader title="My Events" subtitle="All events you coordinate" actions={
-        <button onClick={() => onNavigate('coord-create')} className="flex items-center gap-2 bg-blue-800 hover:bg-blue-900 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"><Plus className="w-4 h-4" /> Create Event</button>
-      } />
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200">
-        <table className="w-full">
-          <thead><tr className="border-b border-slate-100">{['Event Name', 'Term', 'Teams', 'Status', 'Created', 'Actions'].map(c => <th key={c} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>)}</tr></thead>
-          <tbody className="divide-y divide-slate-100">
-            {myEvents.map(ev => (
-              <tr key={ev.id} className="hover:bg-slate-50 transition-colors">
-                <td className="px-4 py-3"><p className="text-sm font-semibold text-slate-900">{ev.name}</p></td>
-                <td className="px-4 py-3 text-sm text-slate-600">{ev.term}</td>
-                <td className="px-4 py-3 text-sm font-mono text-slate-700">{ev.teams}</td>
-                <td className="px-4 py-3"><StatusBadge status={ev.status} /></td>
-                <td className="px-4 py-3 text-sm font-mono text-slate-500">{ev.createdDate}</td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-1">
-                    <button className="p-1.5 text-slate-400 hover:text-blue-700 hover:bg-blue-50 rounded"><Eye className="w-3.5 h-3.5" /></button>
-                    <button className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded"><Edit2 className="w-3.5 h-3.5" /></button>
-                  </div>
-                </td>
+      <PageHeader
+        title="My Events"
+        subtitle="All events you coordinate"
+        actions={
+          <button
+            onClick={() => onNavigate('coord-create')}
+            className="flex items-center gap-2 bg-blue-800 hover:bg-blue-900 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+          >
+            <Plus className="w-4 h-4" /> New Event
+          </button>
+        }
+      />
+
+      {/* Loading */}
+      {loading && (
+        <div className="flex items-center justify-center py-16 text-slate-400">
+          <RefreshCw className="w-5 h-5 animate-spin mr-2" />
+          <span className="text-sm">Đang tải…</span>
+        </div>
+      )}
+
+      {/* Error */}
+      {!loading && error && (
+        <div className="flex flex-col items-center py-14 gap-3">
+          <AlertTriangle className="w-8 h-8 text-red-400" />
+          <p className="text-sm text-red-600">{error}</p>
+          <button onClick={load} className="text-sm text-blue-700 underline">Thử lại</button>
+        </div>
+      )}
+
+      {/* Empty */}
+      {!loading && !error && events.length === 0 && (
+        <div className="flex flex-col items-center py-16 gap-3 text-slate-400">
+          <Calendar className="w-10 h-10 text-slate-300" />
+          <p className="text-sm font-medium text-slate-600">Chưa có event nào</p>
+          <button
+            onClick={() => onNavigate('coord-create')}
+            className="text-sm text-blue-700 underline"
+          >
+            Tạo event đầu tiên
+          </button>
+        </div>
+      )}
+
+      {/* Table */}
+      {!loading && !error && events.length > 0 && (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-slate-100">
+                {['Event Name', 'Type', 'Status', 'Reg. Start', 'Reg. End', 'Actions'].map(c => (
+                  <th key={c} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {events.map(ev => (
+                <tr key={ev.id} className="hover:bg-slate-50 transition-colors">
+                  <td className="px-4 py-3">
+                    <p className="text-sm font-semibold text-slate-900">{ev.name}</p>
+                    <p className="text-xs font-mono text-slate-400">{ev.slug}</p>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="text-xs font-mono bg-blue-50 text-blue-700 px-2 py-0.5 rounded">{ev.eventType}</span>
+                  </td>
+                  <td className="px-4 py-3"><StatusBadge status={ev.status} /></td>
+                  <td className="px-4 py-3 text-xs font-mono text-slate-500">{fmtDate(ev.registrationStart)}</td>
+                  <td className="px-4 py-3 text-xs font-mono text-slate-500">{fmtDate(ev.registrationEnd)}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => {
+                          if (onSelectEvent) {
+                            onSelectEvent(ev.id);
+                          } else {
+                            onNavigate('coord-event-detail');
+                          }
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-blue-700 hover:bg-blue-50 rounded"
+                        title="View detail"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
     </div>
   );
 }
 
 const WIZARD_STEPS = ['Basic Info', 'Rounds', 'Categories', 'Criteria', 'Budget', 'Review & Submit'];
 
-const initialCriteria = [
-  { name: 'Technical Quality', description: 'Code quality, architecture, performance, scalability', maxScore: 10, weight: 40, order: 1, active: true },
-  { name: 'Innovation', description: 'Originality, creative use of technology, novelty of approach', maxScore: 10, weight: 25, order: 2, active: true },
-  { name: 'UI/UX Design', description: 'Interface usability, visual design, user experience quality', maxScore: 10, weight: 20, order: 3, active: true },
-  { name: 'Presentation', description: 'Demo clarity, Q&A responses, communication', maxScore: 10, weight: 15, order: 4, active: true },
-];
-
-const initialBudget = [
-  { category: 'Prize', description: 'First Place Prize', qty: 1, unitCost: 15000000, amount: 15000000 },
-  { category: 'Prize', description: 'Second Place Prize', qty: 1, unitCost: 10000000, amount: 10000000 },
-  { category: 'Prize', description: 'Third Place Prize', qty: 1, unitCost: 5000000, amount: 5000000 },
-  { category: 'Catering', description: 'Event Day Meals & Drinks', qty: 1, unitCost: 8000000, amount: 8000000 },
-  { category: 'Honorarium', description: 'Guest Judge Honorarium', qty: 2, unitCost: 2000000, amount: 4000000 },
-  { category: 'Marketing', description: 'Posters & Online Promotion', qty: 1, unitCost: 3000000, amount: 3000000 },
-];
+interface RoundForm { name: string; submissionDeadline: string; promotionTopN: number | ''; isFinalRound: boolean; }
+interface CategoryForm { name: string; description: string; }
+interface CriterionForm { name: string; description: string; maxScore: number; weight: number; active: boolean; }
+interface BudgetItemForm { categoryId: number | ''; description: string; quantity: number; unitCost: number; }
 
 export function CreateEventWizard({ onNavigate }: { onNavigate: (s: string) => void }) {
   const [step, setStep] = useState(0);
-  const [criteria, setCriteria] = useState(initialCriteria);
-  const totalWeight = criteria.reduce((sum, c) => sum + c.weight, 0);
-  const totalBudget = initialBudget.reduce((sum, b) => sum + b.amount, 0);
+  const [maxReached, setMaxReached] = useState(0);
+  const [saving, setSaving] = useState(false);
+
+  // Meta (loaded on mount)
+  const [disciplines, setDisciplines] = useState<Discipline[]>([]);
+  const [allTermPlans, setAllTermPlans] = useState<TermPlan[]>([]);
+  const [budgetCategories, setBudgetCategories] = useState<BudgetCategory[]>([]);
+  const [loadingMeta, setLoadingMeta] = useState(true);
+
+  // Step 0 – Basic Info
+  const [eventId, setEventId] = useState<number | null>(null);
+  const [name, setName] = useState('');
+  const [disciplineId, setDisciplineId] = useState<number | ''>('');
+  const [termPlanId, setTermPlanId] = useState<number | ''>('');
+  const [description, setDescription] = useState('');
+  const [regStart, setRegStart] = useState('');
+  const [regEnd, setRegEnd] = useState('');
+
+  // Step 1 – Rounds
+  const [rounds, setRounds] = useState<RoundForm[]>([
+    { name: 'Preliminary Round', submissionDeadline: '2026-07-25', promotionTopN: 6, isFinalRound: false },
+    { name: 'Final Round', submissionDeadline: '2026-08-08', promotionTopN: 3, isFinalRound: true },
+  ]);
+  const [roundIds, setRoundIds] = useState<number[]>([]);
+
+  // Step 2 – Categories
+  const [categories, setCategories] = useState<CategoryForm[]>([
+    { name: 'Web Application', description: 'Full-stack web apps' },
+    { name: 'Mobile Application', description: 'iOS/Android mobile apps' },
+    { name: 'AI/Automation Tool', description: 'ML, AI-powered tools' },
+  ]);
+  const [categoryIds, setCategoryIds] = useState<number[]>([]);
+
+  // Step 3 – Criteria
+  const [criteria, setCriteria] = useState<CriterionForm[]>([
+    { name: 'Technical Quality', description: 'Code quality, architecture, performance, scalability', maxScore: 10, weight: 40, active: true },
+    { name: 'Innovation', description: 'Originality, creative use of technology, novelty of approach', maxScore: 10, weight: 25, active: true },
+    { name: 'UI/UX Design', description: 'Interface usability, visual design, user experience quality', maxScore: 10, weight: 20, active: true },
+    { name: 'Presentation', description: 'Demo clarity, Q&A responses, communication', maxScore: 10, weight: 15, active: true },
+  ]);
+  const [criteriaSetId, setCriteriaSetId] = useState<number | null>(null);
+
+  // Step 4 – Budget
+  const [budgetId, setBudgetId] = useState<number | null>(null);
+  const [budgetItems, setBudgetItems] = useState<BudgetItemForm[]>([
+    { categoryId: '', description: 'First Place Prize', quantity: 1, unitCost: 15000000 },
+    { categoryId: '', description: 'Second Place Prize', quantity: 1, unitCost: 10000000 },
+    { categoryId: '', description: 'Third Place Prize', quantity: 1, unitCost: 5000000 },
+    { categoryId: '', description: 'Event Day Meals & Drinks', quantity: 1, unitCost: 8000000 },
+    { categoryId: '', description: 'Guest Judge Honorarium', quantity: 2, unitCost: 2000000 },
+    { categoryId: '', description: 'Posters & Online Promotion', quantity: 1, unitCost: 3000000 },
+  ]);
+
+  // Derived
+  const filteredTermPlans = allTermPlans.filter(tp => disciplineId !== '' && tp.disciplineId === (disciplineId as number));
+  const selectedTermPlan = allTermPlans.find(tp => tp.id === termPlanId);
+  const autoEventType = selectedTermPlan?.term as EventType | undefined;
+  const totalWeight = criteria.filter(c => c.active).reduce((s, c) => s + c.weight, 0);
+  const totalBudget = budgetItems.reduce((s, i) => s + i.quantity * i.unitCost, 0);
+
+  useEffect(() => {
+    Promise.all([getDisciplines(), getTermPlans(), getBudgetCategories()])
+      .then(([d, tp, bc]) => { setDisciplines(d); setAllTermPlans(tp); setBudgetCategories(bc); })
+      .catch(err => toast.error(err instanceof Error ? err.message : 'Không tải được dữ liệu'))
+      .finally(() => setLoadingMeta(false));
+  }, []);
+
+  const advance = (next: number) => {
+    setStep(next);
+    setMaxReached(prev => Math.max(prev, next));
+  };
+
+  const handleNext = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      if (step === 0 && !eventId) {
+        if (!name.trim()) { toast.error('Vui lòng nhập tên event'); return; }
+        if (disciplineId === '') { toast.error('Vui lòng chọn discipline'); return; }
+        if (termPlanId === '') { toast.error('Vui lòng chọn term plan'); return; }
+        if (!autoEventType) { toast.error('Term plan không hợp lệ'); return; }
+        const ev = await createEvent({
+          name: name.trim(),
+          disciplineId: disciplineId as number,
+          termPlanId: termPlanId as number,
+          eventType: autoEventType,
+          description: description.trim() || undefined,
+          registrationStart: regStart || undefined,
+          registrationEnd: regEnd || undefined,
+        });
+        setEventId(ev.id);
+        toast.success(`Event "${ev.name}" đã được tạo (DRAFT)`);
+      } else if (step === 1 && roundIds.length === 0 && eventId) {
+        const saved = await Promise.all(
+          rounds.map((r, i) => createRound(eventId, {
+            name: r.name,
+            orderNumber: i + 1,
+            submissionDeadline: r.submissionDeadline || undefined,
+            promotionTopN: typeof r.promotionTopN === 'number' ? r.promotionTopN : undefined,
+            isFinalRound: r.isFinalRound,
+          }))
+        );
+        setRoundIds(saved.map(r => r.id));
+      } else if (step === 2 && categoryIds.length === 0 && eventId) {
+        const saved = await Promise.all(
+          categories.map(cat => createCategory(eventId, {
+            name: cat.name,
+            description: cat.description || undefined,
+          }))
+        );
+        setCategoryIds(saved.map(c => c.id));
+      } else if (step === 3 && criteriaSetId === null && eventId) {
+        if (totalWeight !== 100) { toast.error(`Tổng weight phải bằng 100%. Hiện tại: ${totalWeight}%`); return; }
+        const active = criteria.filter(c => c.active);
+        if (active.length === 0) { toast.error('Cần ít nhất 1 criterion active'); return; }
+        const cs = await createCriteriaSet(eventId, {
+          name: 'Default Criteria Set',
+          criteria: active.map((c, idx) => ({
+            name: c.name,
+            description: c.description || undefined,
+            maxScore: c.maxScore,
+            weight: c.weight,
+            displayOrder: idx + 1,
+          })),
+        });
+        setCriteriaSetId(cs.id);
+      } else if (step === 4 && budgetId === null && eventId) {
+        const budget = await createBudget(eventId, { currency: 'VND' });
+        const validItems = budgetItems.filter(i => i.categoryId !== '' && i.description.trim());
+        await Promise.all(
+          validItems.map(i => createBudgetItem(eventId, {
+            categoryId: i.categoryId as number,
+            description: i.description.trim(),
+            quantity: i.quantity,
+            unitCost: i.unitCost,
+          }))
+        );
+        setBudgetId(budget.id);
+      }
+      advance(step + 1);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Lỗi khi lưu bước này');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!eventId || saving) return;
+    setSaving(true);
+    try {
+      await submitEvent(eventId);
+      toast.success('Event đã được gửi duyệt — chờ Super Coordinator phê duyệt');
+      onNavigate('coord-events');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Submit thất bại');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const savedBadge = (label: string) => (
+    <span className="inline-flex items-center gap-1 text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-medium">
+      <Check className="w-3 h-3" /> {label}
+    </span>
+  );
 
   return (
     <div className="p-7">
@@ -229,8 +490,12 @@ export function CreateEventWizard({ onNavigate }: { onNavigate: (s: string) => v
       <div className="flex items-center gap-0 mb-8 bg-white rounded-xl shadow-sm border border-slate-200 p-4">
         {WIZARD_STEPS.map((label, i) => (
           <React.Fragment key={label}>
-            <button onClick={() => setStep(i)} className="flex flex-col items-center flex-1 group">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-colors ${i < step ? 'bg-emerald-500 text-white' : i === step ? 'bg-blue-800 text-white' : 'bg-slate-100 text-slate-400 group-hover:bg-slate-200'}`}>
+            <button
+              onClick={() => i <= maxReached && setStep(i)}
+              disabled={i > maxReached}
+              className="flex flex-col items-center flex-1 group disabled:cursor-default"
+            >
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-colors ${i < step ? 'bg-emerald-500 text-white' : i === step ? 'bg-blue-800 text-white' : 'bg-slate-100 text-slate-400'}`}>
                 {i < step ? <Check className="w-4 h-4" /> : i + 1}
               </div>
               <p className={`text-[11px] mt-1.5 font-medium transition-colors ${i === step ? 'text-blue-800' : i < step ? 'text-emerald-700' : 'text-slate-400'}`}>{label}</p>
@@ -241,68 +506,176 @@ export function CreateEventWizard({ onNavigate }: { onNavigate: (s: string) => v
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-slate-200">
-        <div className="px-6 py-5 border-b border-slate-100">
+        <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
           <h2 className="font-bold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>Step {step + 1}: {WIZARD_STEPS[step]}</h2>
+          {step === 0 && eventId && savedBadge(`Đã lưu ID ${eventId}`)}
+          {step === 1 && roundIds.length > 0 && savedBadge(`${roundIds.length} rounds đã lưu`)}
+          {step === 2 && categoryIds.length > 0 && savedBadge(`${categoryIds.length} categories đã lưu`)}
+          {step === 3 && criteriaSetId && savedBadge('Criteria set đã lưu')}
+          {step === 4 && budgetId && savedBadge('Budget đã lưu')}
         </div>
         <div className="p-6">
+
+          {/* ── Step 0: Basic Info ─────────────────────────────── */}
           {step === 0 && (
             <div className="max-w-xl space-y-4">
-              <div><label className="block text-sm font-medium text-slate-700 mb-1">Event Name <span className="text-red-500">*</span></label>
-                <input className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" defaultValue="SEAL Software Engineering Hackathon Summer 2026" /></div>
-              <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-sm font-medium text-slate-700 mb-1">Event Type</label>
-                  <select className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"><option>SUMMER</option><option>SPRING</option><option>FALL</option></select></div>
-                <div><label className="block text-sm font-medium text-slate-700 mb-1">Discipline</label>
-                  <select className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"><option>Software Engineering</option><option>Artificial Intelligence</option><option>IoT & Embedded Systems</option></select></div>
+              {loadingMeta && (
+                <div className="flex items-center gap-2 text-slate-400 text-sm">
+                  <RefreshCw className="w-4 h-4 animate-spin" /> Đang tải disciplines…
+                </div>
+              )}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Discipline <span className="text-red-500">*</span></label>
+                <select
+                  value={disciplineId}
+                  onChange={e => { setDisciplineId(e.target.value === '' ? '' : Number(e.target.value)); setTermPlanId(''); }}
+                  disabled={loadingMeta || !!eventId}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50"
+                >
+                  <option value="">— Chọn discipline —</option>
+                  {disciplines.map(d => <option key={d.id} value={d.id}>{d.name} ({d.code})</option>)}
+                </select>
               </div>
-              <div><label className="block text-sm font-medium text-slate-700 mb-1">Term Plan</label>
-                <select className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"><option>Summer 2026</option><option>Fall 2026</option></select></div>
-              <div><label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
-                <textarea className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-700" rows={3} defaultValue="A multi-round software engineering hackathon for FPT University HCMC students." /></div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Term Plan <span className="text-red-500">*</span></label>
+                <select
+                  value={termPlanId}
+                  onChange={e => setTermPlanId(e.target.value === '' ? '' : Number(e.target.value))}
+                  disabled={disciplineId === '' || filteredTermPlans.length === 0 || !!eventId}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50"
+                >
+                  <option value="">{disciplineId === '' ? '— Chọn discipline trước —' : filteredTermPlans.length === 0 ? 'Không có term plan' : '— Chọn term plan —'}</option>
+                  {filteredTermPlans.map(tp => (
+                    <option key={tp.id} value={tp.id} disabled={tp.remaining === 0}>
+                      {tp.term} {tp.year} — còn {tp.remaining}/{tp.maxEvents} slot{tp.remaining === 0 ? ' (hết)' : ''}
+                    </option>
+                  ))}
+                </select>
+                {selectedTermPlan && (
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <span className="text-xs text-slate-500">Event Type (auto):</span>
+                    <span className="text-xs font-mono font-semibold bg-blue-100 text-blue-700 px-2 py-0.5 rounded">{selectedTermPlan.term}</span>
+                    <span className="text-xs text-slate-400">· {selectedTermPlan.remaining} slot còn lại</span>
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Event Name <span className="text-red-500">*</span></label>
+                <input
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  disabled={!!eventId}
+                  placeholder="VD: SEAL Software Engineering Hackathon FALL 2026"
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
+                <textarea
+                  value={description}
+                  onChange={e => setDescription(e.target.value)}
+                  disabled={!!eventId}
+                  rows={3}
+                  placeholder="Mô tả ngắn về event…"
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50"
+                />
+              </div>
               <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-sm font-medium text-slate-700 mb-1">Registration Opens</label>
-                  <input type="date" className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" defaultValue="2026-06-20" /></div>
-                <div><label className="block text-sm font-medium text-slate-700 mb-1">Registration Closes</label>
-                  <input type="date" className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" defaultValue="2026-06-30" /></div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Registration Opens</label>
+                  <input type="datetime-local" value={regStart} onChange={e => setRegStart(e.target.value)} disabled={!!eventId}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Registration Closes</label>
+                  <input type="datetime-local" value={regEnd} onChange={e => setRegEnd(e.target.value)} disabled={!!eventId}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
+                </div>
               </div>
             </div>
           )}
+
+          {/* ── Step 1: Rounds ─────────────────────────────────── */}
           {step === 1 && (
             <div className="space-y-4">
-              <div className="flex justify-end"><button className="flex items-center gap-1.5 text-sm text-blue-700 font-medium hover:text-blue-800"><Plus className="w-4 h-4" /> Add Round</button></div>
-              {[{ name: 'Preliminary Round', order: 1, deadline: '2026-07-25', promotionTopN: 6, isFinal: false }, { name: 'Final Round', order: 2, deadline: '2026-08-08', promotionTopN: 3, isFinal: true }].map((r, i) => (
+              <div className="flex justify-end">
+                <button
+                  onClick={() => roundIds.length === 0 && setRounds(prev => [...prev, { name: `Round ${prev.length + 1}`, submissionDeadline: '', promotionTopN: '', isFinalRound: false }])}
+                  disabled={roundIds.length > 0}
+                  className="flex items-center gap-1.5 text-sm text-blue-700 font-medium hover:text-blue-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Plus className="w-4 h-4" /> Add Round
+                </button>
+              </div>
+              {rounds.map((r, i) => (
                 <div key={i} className="p-4 rounded-lg border border-slate-200 space-y-3">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm font-semibold text-slate-900">Round {r.order}</span>
-                    {r.isFinal && <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">Final</span>}
+                    <span className="text-sm font-semibold text-slate-900">Round {i + 1}</span>
+                    <div className="flex items-center gap-2">
+                      {r.isFinalRound && <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">Final</span>}
+                      {roundIds.length === 0 && rounds.length > 1 && (
+                        <button onClick={() => setRounds(prev => prev.filter((_, idx) => idx !== i))} className="text-xs text-red-500 hover:text-red-700">Remove</button>
+                      )}
+                    </div>
                   </div>
                   <div className="grid grid-cols-3 gap-3">
-                    <div><label className="block text-xs font-medium text-slate-600 mb-1">Round Name</label>
-                      <input className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" defaultValue={r.name} /></div>
-                    <div><label className="block text-xs font-medium text-slate-600 mb-1">Submission Deadline</label>
-                      <input type="date" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" defaultValue={r.deadline} /></div>
-                    <div><label className="block text-xs font-medium text-slate-600 mb-1">Promote Top N Teams</label>
-                      <input type="number" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-700" defaultValue={r.promotionTopN} /></div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">Round Name</label>
+                      <input value={r.name} onChange={e => { const c = [...rounds]; c[i] = { ...c[i], name: e.target.value }; setRounds(c); }} disabled={roundIds.length > 0}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">Submission Deadline</label>
+                      <input type="date" value={r.submissionDeadline} onChange={e => { const c = [...rounds]; c[i] = { ...c[i], submissionDeadline: e.target.value }; setRounds(c); }} disabled={roundIds.length > 0}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">Promote Top N Teams</label>
+                      <input type="number" value={r.promotionTopN} onChange={e => { const c = [...rounds]; c[i] = { ...c[i], promotionTopN: e.target.value === '' ? '' : Number(e.target.value) }; setRounds(c); }} disabled={roundIds.length > 0}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input type="checkbox" id={`final-${i}`} checked={r.isFinalRound}
+                      onChange={e => { const c = [...rounds]; c[i] = { ...c[i], isFinalRound: e.target.checked }; setRounds(c); }}
+                      disabled={roundIds.length > 0} className="rounded border-slate-300" />
+                    <label htmlFor={`final-${i}`} className="text-xs text-slate-600">This is the final round</label>
                   </div>
                 </div>
               ))}
             </div>
           )}
+
+          {/* ── Step 2: Categories ─────────────────────────────── */}
           {step === 2 && (
             <div className="space-y-4">
-              <div className="flex justify-end"><button className="flex items-center gap-1.5 text-sm text-blue-700 font-medium hover:text-blue-800"><Plus className="w-4 h-4" /> Add Category</button></div>
-              {[{ name: 'Web Application', desc: 'Full-stack web apps', mentor: 'Hoang Thi Em' }, { name: 'Mobile Application', desc: 'iOS/Android mobile apps', mentor: 'Pham Duc Dat' }, { name: 'AI/Automation Tool', desc: 'ML, AI-powered tools', mentor: 'Hoang Thi Em' }].map((cat, i) => (
-                <div key={i} className="p-4 rounded-lg border border-slate-200 grid grid-cols-3 gap-3">
-                  <div><label className="block text-xs font-medium text-slate-600 mb-1">Category Name</label>
-                    <input className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" defaultValue={cat.name} /></div>
-                  <div><label className="block text-xs font-medium text-slate-600 mb-1">Description</label>
-                    <input className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" defaultValue={cat.desc} /></div>
-                  <div><label className="block text-xs font-medium text-slate-600 mb-1">Assigned Mentor</label>
-                    <select className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"><option>{cat.mentor}</option><option>Pham Duc Dat</option></select></div>
+              <div className="flex justify-end">
+                <button
+                  onClick={() => categoryIds.length === 0 && setCategories(prev => [...prev, { name: '', description: '' }])}
+                  disabled={categoryIds.length > 0}
+                  className="flex items-center gap-1.5 text-sm text-blue-700 font-medium hover:text-blue-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Plus className="w-4 h-4" /> Add Category
+                </button>
+              </div>
+              {categories.map((cat, i) => (
+                <div key={i} className="p-4 rounded-lg border border-slate-200 grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Category Name</label>
+                    <input value={cat.name} onChange={e => { const c = [...categories]; c[i] = { ...c[i], name: e.target.value }; setCategories(c); }} disabled={categoryIds.length > 0}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Description</label>
+                    <input value={cat.description} onChange={e => { const c = [...categories]; c[i] = { ...c[i], description: e.target.value }; setCategories(c); }} disabled={categoryIds.length > 0}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
+                  </div>
                 </div>
               ))}
             </div>
           )}
+
+          {/* ── Step 3: Criteria ───────────────────────────────── */}
           {step === 3 && (
             <div className="space-y-4">
               <div className="flex items-center justify-between mb-2">
@@ -317,11 +690,28 @@ export function CreateEventWizard({ onNavigate }: { onNavigate: (s: string) => v
                 <tbody className="divide-y divide-slate-100">
                   {criteria.map((c, i) => (
                     <tr key={i} className="hover:bg-slate-50">
-                      <td className="px-3 py-2.5"><input className="w-full border border-slate-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-700" value={c.name} onChange={e => { const copy = [...criteria]; copy[i].name = e.target.value; setCriteria(copy); }} /></td>
-                      <td className="px-3 py-2.5"><input className="w-full border border-slate-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-700" value={c.description} onChange={() => {}} /></td>
-                      <td className="px-3 py-2.5"><input type="number" min={1} max={100} className="w-16 border border-slate-200 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-700" value={c.maxScore} onChange={() => {}} /></td>
-                      <td className="px-3 py-2.5"><input type="number" min={0} max={100} className="w-16 border border-slate-200 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-700" value={c.weight} onChange={e => { const copy = [...criteria]; copy[i].weight = Number(e.target.value); setCriteria(copy); }} /></td>
-                      <td className="px-3 py-2.5"><div className={`w-10 h-5 rounded-full cursor-pointer transition-colors ${c.active ? 'bg-blue-700' : 'bg-slate-300'}`} onClick={() => { const copy = [...criteria]; copy[i].active = !copy[i].active; setCriteria(copy); }}><div className={`w-4 h-4 bg-white rounded-full m-0.5 transition-transform shadow ${c.active ? 'translate-x-5' : 'translate-x-0'}`} /></div></td>
+                      <td className="px-3 py-2.5">
+                        <input value={c.name} onChange={e => { const copy = [...criteria]; copy[i] = { ...copy[i], name: e.target.value }; setCriteria(copy); }} disabled={!!criteriaSetId}
+                          className="w-full border border-slate-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <input value={c.description} onChange={e => { const copy = [...criteria]; copy[i] = { ...copy[i], description: e.target.value }; setCriteria(copy); }} disabled={!!criteriaSetId}
+                          className="w-full border border-slate-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <input type="number" min={1} max={100} value={c.maxScore} onChange={e => { const copy = [...criteria]; copy[i] = { ...copy[i], maxScore: Number(e.target.value) }; setCriteria(copy); }} disabled={!!criteriaSetId}
+                          className="w-16 border border-slate-200 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <input type="number" min={0} max={100} value={c.weight} onChange={e => { const copy = [...criteria]; copy[i] = { ...copy[i], weight: Number(e.target.value) }; setCriteria(copy); }} disabled={!!criteriaSetId}
+                          className="w-16 border border-slate-200 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <div className={`w-10 h-5 rounded-full transition-colors ${criteriaSetId ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} ${c.active ? 'bg-blue-700' : 'bg-slate-300'}`}
+                          onClick={() => { if (!criteriaSetId) { const copy = [...criteria]; copy[i] = { ...copy[i], active: !copy[i].active }; setCriteria(copy); } }}>
+                          <div className={`w-4 h-4 bg-white rounded-full m-0.5 transition-transform shadow ${c.active ? 'translate-x-5' : 'translate-x-0'}`} />
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -329,48 +719,112 @@ export function CreateEventWizard({ onNavigate }: { onNavigate: (s: string) => v
               {totalWeight !== 100 && <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-4 py-2"><AlertTriangle className="w-4 h-4 text-red-600" /><p className="text-sm text-red-700">Total weight is {totalWeight}%. Must equal exactly 100%.</p></div>}
             </div>
           )}
+
+          {/* ── Step 4: Budget ─────────────────────────────────── */}
           {step === 4 && (
             <div>
               <table className="w-full mb-3">
                 <thead><tr className="border-b border-slate-200">{['Category', 'Description', 'Qty', 'Unit Cost (VND)', 'Amount (VND)'].map(c => <th key={c} className="text-left px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>)}</tr></thead>
                 <tbody className="divide-y divide-slate-100">
-                  {initialBudget.map((item, i) => (
+                  {budgetItems.map((item, i) => (
                     <tr key={i} className="hover:bg-slate-50">
-                      <td className="px-3 py-2"><select className="border border-slate-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-700"><option>{item.category}</option></select></td>
-                      <td className="px-3 py-2"><input className="w-full border border-slate-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-700" defaultValue={item.description} /></td>
-                      <td className="px-3 py-2"><input type="number" className="w-14 border border-slate-200 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-700" defaultValue={item.qty} /></td>
-                      <td className="px-3 py-2"><input type="number" className="w-28 border border-slate-200 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-700" defaultValue={item.unitCost} /></td>
-                      <td className="px-3 py-2 text-sm font-mono font-semibold text-slate-900 text-right">{item.amount.toLocaleString()}</td>
+                      <td className="px-3 py-2">
+                        <select value={item.categoryId} onChange={e => { const c = [...budgetItems]; c[i] = { ...c[i], categoryId: e.target.value === '' ? '' : Number(e.target.value) }; setBudgetItems(c); }} disabled={!!budgetId}
+                          className="border border-slate-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50">
+                          <option value="">— Chọn —</option>
+                          {budgetCategories.map(bc => <option key={bc.id} value={bc.id}>{bc.name}</option>)}
+                        </select>
+                      </td>
+                      <td className="px-3 py-2">
+                        <input value={item.description} onChange={e => { const c = [...budgetItems]; c[i] = { ...c[i], description: e.target.value }; setBudgetItems(c); }} disabled={!!budgetId}
+                          className="w-full border border-slate-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input type="number" min={1} value={item.quantity} onChange={e => { const c = [...budgetItems]; c[i] = { ...c[i], quantity: Number(e.target.value) }; setBudgetItems(c); }} disabled={!!budgetId}
+                          className="w-14 border border-slate-200 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input type="number" min={0} value={item.unitCost} onChange={e => { const c = [...budgetItems]; c[i] = { ...c[i], unitCost: Number(e.target.value) }; setBudgetItems(c); }} disabled={!!budgetId}
+                          className="w-28 border border-slate-200 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
+                      </td>
+                      <td className="px-3 py-2 text-sm font-mono font-semibold text-slate-900 text-right">{(item.quantity * item.unitCost).toLocaleString()}</td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot><tr className="border-t-2 border-slate-200 bg-slate-50"><td colSpan={4} className="px-3 py-2 text-sm font-bold">Total Estimated</td><td className="px-3 py-2 text-sm font-bold text-blue-800 font-mono text-right">{totalBudget.toLocaleString()}</td></tr></tfoot>
               </table>
-              <button className="flex items-center gap-1.5 text-sm text-blue-700 font-medium hover:text-blue-800"><Plus className="w-4 h-4" /> Add Budget Item</button>
+              {!budgetId && (
+                <button onClick={() => setBudgetItems(prev => [...prev, { categoryId: '', description: '', quantity: 1, unitCost: 0 }])}
+                  className="flex items-center gap-1.5 text-sm text-blue-700 font-medium hover:text-blue-800">
+                  <Plus className="w-4 h-4" /> Add Budget Item
+                </button>
+              )}
+              {budgetCategories.length === 0 && !loadingMeta && (
+                <p className="text-xs text-amber-600 mt-2">Không tải được danh sách budget categories — vui lòng thêm thủ công hoặc bỏ qua bước này.</p>
+              )}
             </div>
           )}
+
+          {/* ── Step 5: Review & Submit ─────────────────────────── */}
           {step === 5 && (
             <div className="space-y-5 max-w-2xl">
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
                 <h3 className="font-semibold text-blue-900 mb-3" style={{ fontFamily: 'var(--font-display)' }}>Review Summary</h3>
                 <div className="grid grid-cols-2 gap-3 text-sm">
-                  {[['Event Name', 'SEAL SE Hackathon Summer 2026'], ['Type', 'SUMMER'], ['Discipline', 'Software Engineering'], ['Term', 'Summer 2026'], ['Rounds', '2 (Preliminary + Final)'], ['Categories', '3'], ['Criteria', '4 criteria (total weight 100%)'], ['Total Budget', '45,000,000 VND']].map(([k, v]) => (
+                  {[
+                    ['Event Name', name || '—'],
+                    ['Type', autoEventType ?? '—'],
+                    ['Discipline', disciplines.find(d => d.id === disciplineId)?.name ?? '—'],
+                    ['Term', selectedTermPlan ? `${selectedTermPlan.term} ${selectedTermPlan.year}` : '—'],
+                    ['Rounds', `${rounds.length} (${rounds.map(r => r.name).join(', ')})`],
+                    ['Categories', String(categories.length)],
+                    ['Criteria', `${criteria.filter(c => c.active).length} criteria (total weight ${totalWeight}%)`],
+                    ['Total Budget', `${totalBudget.toLocaleString()} VND`],
+                  ].map(([k, v]) => (
                     <div key={k}><span className="text-blue-600 font-medium">{k}:</span><span className="text-blue-900 ml-2">{v}</span></div>
                   ))}
                 </div>
               </div>
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
-                <div><p className="text-sm font-semibold text-amber-800">Submitting for Approval</p><p className="text-sm text-amber-700 mt-1">This event will be sent to the Super Coordinator for review. You cannot edit the event while it is under review.</p></div>
+                <div>
+                  <p className="text-sm font-semibold text-amber-800">Submitting for Approval</p>
+                  <p className="text-sm text-amber-700 mt-1">This event will be sent to the Super Coordinator for review. You cannot edit the event while it is under review.</p>
+                </div>
               </div>
-              <button className="w-full bg-blue-800 hover:bg-blue-900 text-white font-semibold py-3 rounded-xl text-sm transition-colors flex items-center justify-center gap-2"><Send className="w-4 h-4" /> Submit Event for Approval</button>
+              <button
+                onClick={handleSubmit}
+                disabled={saving || !eventId}
+                className="w-full bg-blue-800 hover:bg-blue-900 disabled:opacity-50 text-white font-semibold py-3 rounded-xl text-sm transition-colors flex items-center justify-center gap-2"
+              >
+                {saving ? <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> : <Send className="w-4 h-4" />}
+                Submit Event for Approval
+              </button>
             </div>
           )}
+
         </div>
         <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-between">
-          <button onClick={() => setStep(Math.max(0, step - 1))} disabled={step === 0} className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-lg hover:bg-slate-50 disabled:opacity-40 transition-colors">← Previous</button>
+          <button
+            onClick={() => setStep(Math.max(0, step - 1))}
+            disabled={step === 0 || saving}
+            className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-lg hover:bg-slate-50 disabled:opacity-40 transition-colors"
+          >
+            ← Previous
+          </button>
           <span className="text-xs text-slate-400">Step {step + 1} of {WIZARD_STEPS.length}</span>
-          <button onClick={() => setStep(Math.min(WIZARD_STEPS.length - 1, step + 1))} disabled={step === WIZARD_STEPS.length - 1} className="px-4 py-2 bg-blue-800 text-white text-sm font-semibold rounded-lg hover:bg-blue-900 disabled:opacity-40 transition-colors">Next →</button>
+          {step < WIZARD_STEPS.length - 1 ? (
+            <button
+              onClick={handleNext}
+              disabled={saving || loadingMeta}
+              className="px-4 py-2 bg-blue-800 text-white text-sm font-semibold rounded-lg hover:bg-blue-900 disabled:opacity-40 transition-colors flex items-center gap-2"
+            >
+              {saving && <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
+              Next →
+            </button>
+          ) : (
+            <div />
+          )}
         </div>
       </div>
     </div>
@@ -792,6 +1246,195 @@ export function AccountApprovalsPage() {
           </div>
         </Modal>
       )}
+    </div>
+  );
+}
+
+// ── Event Detail (read-only) ──────────────────────────────────────────────────
+export function EventDetailPage({
+  eventId,
+  onNavigate,
+}: {
+  eventId: number;
+  onNavigate: (s: string) => void;
+}) {
+  const [event, setEvent] = useState<EventSummary | null>(null);
+  const [rounds, setRounds] = useState<EventRound[]>([]);
+  const [categories, setCategories] = useState<EventCategory[]>([]);
+  const [criteriaSets, setCriteriaSets] = useState<CriteriaSet[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!eventId) return;
+    setLoading(true);
+    setError(null);
+
+    Promise.all([
+      getEvent(eventId),
+      getEventRounds(eventId).catch(() => [] as EventRound[]),
+      getEventCategories(eventId).catch(() => [] as EventCategory[]),
+      getEventCriteriaSets(eventId).catch(() => [] as CriteriaSet[]),
+    ])
+      .then(([ev, r, c, cs]) => {
+        setEvent(ev);
+        setRounds(r);
+        setCategories(c);
+        setCriteriaSets(cs);
+      })
+      .catch(err => setError(err instanceof Error ? err.message : 'Không tải được event'))
+      .finally(() => setLoading(false));
+  }, [eventId]);
+
+  const fmtDate = (s: string | null | undefined) =>
+    s ? s.replace('T', ' ').slice(0, 16) : '—';
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-24 text-slate-400">
+        <RefreshCw className="w-5 h-5 animate-spin mr-2" />
+        <span className="text-sm">Đang tải chi tiết event…</span>
+      </div>
+    );
+  }
+
+  if (error || !event) {
+    return (
+      <div className="flex flex-col items-center py-20 gap-3">
+        <AlertTriangle className="w-8 h-8 text-red-400" />
+        <p className="text-sm text-red-600">{error ?? 'Event not found'}</p>
+        <button onClick={() => onNavigate('coord-events')} className="text-sm text-blue-700 underline flex items-center gap-1">
+          <ArrowLeft className="w-3.5 h-3.5" /> Về danh sách
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-7 space-y-6">
+      {/* Header */}
+      <div className="flex items-start gap-4">
+        <button
+          onClick={() => onNavigate('coord-events')}
+          className="mt-0.5 p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors flex-shrink-0"
+        >
+          <ArrowLeft className="w-4 h-4" />
+        </button>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-3 mb-1 flex-wrap">
+            <h1 className="text-xl font-bold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>
+              {event.name}
+            </h1>
+            <StatusBadge status={event.status} />
+          </div>
+          <div className="flex items-center gap-4 text-xs text-slate-500 font-mono flex-wrap">
+            <span>/{event.slug}</span>
+            <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-semibold">{event.eventType}</span>
+            <span>Reg: {fmtDate(event.registrationStart)} → {fmtDate(event.registrationEnd)}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Rounds */}
+      <section className="bg-white rounded-xl shadow-sm border border-slate-200">
+        <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
+          <Layers className="w-4 h-4 text-slate-400" />
+          <h2 className="text-sm font-semibold text-slate-700">Rounds ({rounds.length})</h2>
+        </div>
+        {rounds.length === 0 ? (
+          <p className="px-5 py-6 text-sm text-slate-400 text-center">Chưa có round nào được cấu hình.</p>
+        ) : (
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-slate-100">
+                {['#', 'Tên round', 'Status', 'Deadline', 'Top N promote'].map(h => (
+                  <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {rounds.map(r => (
+                <tr key={r.id} className="hover:bg-slate-50">
+                  <td className="px-4 py-3 text-xs font-mono text-slate-400">{r.roundNumber}</td>
+                  <td className="px-4 py-3 text-sm font-medium text-slate-900">{r.name}</td>
+                  <td className="px-4 py-3"><StatusBadge status={r.status} /></td>
+                  <td className="px-4 py-3 text-xs font-mono text-slate-500">{fmtDate(r.submissionDeadline)}</td>
+                  <td className="px-4 py-3 text-xs font-mono text-slate-600">{r.promotionTopN ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      {/* Categories */}
+      <section className="bg-white rounded-xl shadow-sm border border-slate-200">
+        <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
+          <Tag className="w-4 h-4 text-slate-400" />
+          <h2 className="text-sm font-semibold text-slate-700">Categories ({categories.length})</h2>
+        </div>
+        {categories.length === 0 ? (
+          <p className="px-5 py-6 text-sm text-slate-400 text-center">Chưa có category nào.</p>
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {categories.map(cat => (
+              <div key={cat.id} className="px-5 py-3 flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-slate-900">{cat.name}</p>
+                  {cat.description && <p className="text-xs text-slate-500 mt-0.5">{cat.description}</p>}
+                </div>
+                {cat.maxTeams != null && (
+                  <span className="text-xs font-mono bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
+                    max {cat.maxTeams} teams
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Criteria Sets */}
+      <section className="bg-white rounded-xl shadow-sm border border-slate-200">
+        <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
+          <List className="w-4 h-4 text-slate-400" />
+          <h2 className="text-sm font-semibold text-slate-700">Criteria Sets ({criteriaSets.length})</h2>
+        </div>
+        {criteriaSets.length === 0 ? (
+          <p className="px-5 py-6 text-sm text-slate-400 text-center">Chưa có criteria set nào.</p>
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {criteriaSets.map(cs => (
+              <div key={cs.id} className="px-5 py-4">
+                <p className="text-sm font-semibold text-slate-900 mb-1">{cs.name}</p>
+                {cs.description && <p className="text-xs text-slate-500 mb-3">{cs.description}</p>}
+                {cs.criteria && cs.criteria.length > 0 && (
+                  <div className="bg-slate-50 rounded-lg overflow-hidden border border-slate-100">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b border-slate-200">
+                          {['Criterion', 'Max Score', 'Weight %'].map(h => (
+                            <th key={h} className="text-left px-3 py-2 text-xs font-semibold text-slate-500">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {cs.criteria.map(cr => (
+                          <tr key={cr.id}>
+                            <td className="px-3 py-2 text-xs text-slate-800 font-medium">{cr.name}</td>
+                            <td className="px-3 py-2 text-xs font-mono text-slate-600">{cr.maxScore}</td>
+                            <td className="px-3 py-2 text-xs font-mono text-slate-600">{cr.weight}%</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
