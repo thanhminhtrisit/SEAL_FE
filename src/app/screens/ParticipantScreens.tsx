@@ -139,7 +139,7 @@ export function TeamDetail({ onNavigate }: { onNavigate: (s: string) => void }) 
   useEffect(() => {
     getEvents()
       .then(eventList => setEvents(safeArray(eventList)))
-      .catch(() => {})
+      .catch(err => toast.error(err instanceof Error ? err.message : 'Không tải được danh sách event'))
       .finally(() => setLoadingMeta(false));
   }, []);
 
@@ -148,7 +148,10 @@ export function TeamDetail({ onNavigate }: { onNavigate: (s: string) => void }) 
     if (selectedEventId === '') { setCategories([]); setSelectedCategoryId(''); return; }
     getEventCategories(selectedEventId as number)
       .then(categoryList => setCategories(safeArray(categoryList)))
-      .catch(() => setCategories([]));
+      .catch(err => {
+        setCategories([]);
+        toast.error(err instanceof Error ? err.message : 'Không tải được category');
+      });
   }, [selectedEventId]);
 
   // Load team detail when teamId is known
@@ -161,6 +164,7 @@ export function TeamDetail({ onNavigate }: { onNavigate: (s: string) => void }) 
         localStorage.removeItem(LS_TEAM_ID);
         setTeamId(null);
         setTeam(null);
+        toast.error('Không tải được thông tin team, vui lòng chọn hoặc tạo team lại');
       })
       .finally(() => setLoadingTeam(false));
   }, [teamId]);

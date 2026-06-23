@@ -1078,7 +1078,9 @@ export function JudgeAssignment() {
       });
       setTempResult(result);
       // Refresh judge pool so new guest appears in dropdown
-      getJudges().then(pool => setJudgePool(safeArray(pool))).catch(() => {});
+      getJudges()
+        .then(pool => setJudgePool(safeArray(pool)))
+        .catch(err => toast.error(err instanceof Error ? err.message : 'Không tải lại được danh sách judge'));
       toast.success(`Guest judge "${result.fullName}" đã được tạo`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Tạo guest judge thất bại');
@@ -1624,7 +1626,9 @@ export function AccountApprovalsPage() {
       const data = await getPendingAccounts(0, 50);
       setAccounts(safeArray(data.content));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Không tải được danh sách');
+      const message = err instanceof Error ? err.message : 'Không tải được danh sách';
+      setError(message);
+      toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -1916,9 +1920,18 @@ export function EventDetailPage({
 
     Promise.all([
       getEvent(eventId),
-      getEventRounds(eventId).catch(() => [] as EventRound[]),
-      getEventCategories(eventId).catch(() => [] as EventCategory[]),
-      getEventCriteriaSets(eventId).catch(() => [] as CriteriaSet[]),
+      getEventRounds(eventId).catch(err => {
+        toast.error(err instanceof Error ? err.message : 'Không tải được rounds');
+        return [] as EventRound[];
+      }),
+      getEventCategories(eventId).catch(err => {
+        toast.error(err instanceof Error ? err.message : 'Không tải được categories');
+        return [] as EventCategory[];
+      }),
+      getEventCriteriaSets(eventId).catch(err => {
+        toast.error(err instanceof Error ? err.message : 'Không tải được criteria sets');
+        return [] as CriteriaSet[];
+      }),
     ])
       .then(([ev, r, c, cs]) => {
         setEvent(ev);
@@ -1926,7 +1939,11 @@ export function EventDetailPage({
         setCategories(safeArray(c));
         setCriteriaSets(safeArray(cs).map(set => ({ ...set, criteria: safeArray(set.criteria) })));
       })
-      .catch(err => setError(err instanceof Error ? err.message : 'Không tải được event'))
+      .catch(err => {
+        const message = err instanceof Error ? err.message : 'Không tải được event';
+        setError(message);
+        toast.error(message);
+      })
       .finally(() => setLoading(false));
   }, [eventId]);
 
