@@ -336,7 +336,13 @@ interface CategoryForm { name: string; description: string; }
 interface CriterionForm { name: string; description: string; maxScore: number; weight: number; active: boolean; }
 interface BudgetItemForm { categoryId: number | ''; description: string; quantity: number; unitCost: number; }
 
-export function CreateEventWizard({ onNavigate }: { onNavigate: (s: string) => void }) {
+export function CreateEventWizard({
+  onNavigate,
+  onSelectEvent,
+}: {
+  onNavigate: (s: string) => void;
+  onSelectEvent?: (id: number) => void;
+}) {
   const [step, setStep] = useState(0);
   const [maxReached, setMaxReached] = useState(0);
   const [saving, setSaving] = useState(false);
@@ -498,6 +504,16 @@ export function CreateEventWizard({ onNavigate }: { onNavigate: (s: string) => v
       toast.error(err instanceof Error ? err.message : 'Submit thất bại');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleFinishConfiguration = () => {
+    if (!eventId) return;
+    toast.info('Hãy gán judge cho mỗi round ở Judge Assignment, rồi Submit tại Event Detail.');
+    if (onSelectEvent) {
+      onSelectEvent(eventId);
+    } else {
+      onNavigate('coord-event-detail');
     }
   };
 
@@ -814,11 +830,11 @@ export function CreateEventWizard({ onNavigate }: { onNavigate: (s: string) => v
                 <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
                 <div>
                   <p className="text-sm font-semibold text-emerald-800">Configuration Saved</p>
-                  <p className="text-sm text-emerald-700 mt-1">Review the event from My Events. Submit for approval from Event Detail after assigning judges.</p>
+                  <p className="text-sm text-emerald-700 mt-1">Hãy gán judge cho mỗi round ở Judge Assignment, rồi Submit tại Event Detail.</p>
                 </div>
               </div>
               <button
-                onClick={() => onNavigate('coord-events')}
+                onClick={handleFinishConfiguration}
                 disabled={saving || !eventId}
                 className="w-full bg-blue-800 hover:bg-blue-900 disabled:opacity-50 text-white font-semibold py-3 rounded-xl text-sm transition-colors flex items-center justify-center gap-2"
               >

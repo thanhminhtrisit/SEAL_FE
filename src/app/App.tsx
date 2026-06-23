@@ -295,7 +295,7 @@ function ScreenRenderer({ screen, role, onNavigate, onRoleLogin, selectedEventId
     // Event Coordinator
     case 'coord-dashboard': return <CoordDashboard onNavigate={onNavigate} />;
     case 'coord-events': return <EventList onNavigate={onNavigate} onSelectEvent={onSelectEvent} />;
-    case 'coord-create': return <CreateEventWizard onNavigate={onNavigate} />;
+    case 'coord-create': return <CreateEventWizard onNavigate={onNavigate} onSelectEvent={onSelectEvent} />;
     case 'coord-participants': return <ParticipantApproval />;
     case 'coord-account-approvals': return <AccountApprovalsPage />;
     case 'coord-event-detail': return selectedEventId
