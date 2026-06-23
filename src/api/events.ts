@@ -36,7 +36,7 @@ export interface CreateEventRequest {
 export interface EventRound {
   id: number;
   name: string;
-  roundNumber: number;
+  orderNumber: number;
   status: string;
   submissionDeadline?: string | null;
   promotionTopN?: number | null;

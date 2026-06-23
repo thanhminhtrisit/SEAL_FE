@@ -2031,7 +2031,7 @@ export function EventDetailPage({
             <tbody className="divide-y divide-slate-100">
               {rounds.map(r => (
                 <tr key={r.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 text-xs font-mono text-slate-400">{r.roundNumber}</td>
+                  <td className="px-4 py-3 text-xs font-mono text-slate-400">{r.orderNumber}</td>
                   <td className="px-4 py-3 text-sm font-medium text-slate-900">{r.name}</td>
                   <td className="px-4 py-3"><StatusBadge status={r.status} /></td>
                   <td className="px-4 py-3 text-xs font-mono text-slate-500">{fmtDate(r.submissionDeadline)}</td>
