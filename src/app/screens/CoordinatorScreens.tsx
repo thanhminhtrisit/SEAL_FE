@@ -1077,6 +1077,15 @@ export function JudgeAssignment() {
         phone: guestPhone.trim() || undefined,
       });
       setTempResult(result);
+      setJudgePool(prev => [
+        ...prev.filter(j => j.id !== result.userId),
+        {
+          id: result.userId,
+          fullName: result.fullName,
+          email: result.email,
+          accountType: 'GUEST_JUDGE',
+        },
+      ]);
       // Refresh judge pool so new guest appears in dropdown
       getJudges()
         .then(pool => setJudgePool(safeArray(pool)))

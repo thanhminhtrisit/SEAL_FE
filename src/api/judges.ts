@@ -16,6 +16,18 @@ export interface RoundJudge {
   accountType: string;
 }
 
+interface RawRoundJudge {
+  assignmentId?: number;
+  id?: number;
+  judgeId?: number;
+  fullName?: string;
+  judgeName?: string;
+  email?: string;
+  judgeEmail?: string;
+  accountType?: string;
+  judgeType?: string;
+}
+
 export interface AssignJudgeRequest {
   judgeId: number;
   categoryId?: number;
@@ -43,7 +55,7 @@ export async function getRoundJudges(eventId: number, roundId: number): Promise<
   const res = await apiClient.get<ApiResponse<RoundJudge[]>>(
     `/api/events/${eventId}/rounds/${roundId}/judges`,
   );
-  return res.data.data ?? [];
+  return (res.data.data ?? []).map(normalizeRoundJudge);
 }
 
 export async function assignJudge(
@@ -57,7 +69,7 @@ export async function assignJudge(
   );
   const data = res.data.data;
   if (!data) throw new Error(res.data.message ?? 'Assign failed');
-  return data;
+  return normalizeRoundJudge(data);
 }
 
 export async function revokeJudge(
@@ -78,4 +90,18 @@ export async function createGuestJudge(
   const data = res.data.data;
   if (!data) throw new Error(res.data.message ?? 'Create guest judge failed');
   return data;
+}
+
+function normalizeRoundJudge(raw: RawRoundJudge): RoundJudge {
+  const email = raw.email ?? raw.judgeEmail ?? '';
+  return {
+    assignmentId: raw.assignmentId ?? raw.id ?? 0,
+    judgeId: raw.judgeId ?? 0,
+    fullName: raw.fullName ?? raw.judgeName ?? 'Judge',
+    email,
+    accountType:
+      raw.accountType ??
+      raw.judgeType ??
+      (email && !email.endsWith('@seal.local') ? 'GUEST_JUDGE' : 'STAFF'),
+  };
 }
