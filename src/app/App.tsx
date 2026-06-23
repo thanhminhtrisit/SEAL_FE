@@ -31,7 +31,7 @@ import { MentorDashboard, MentorTeams } from './screens/MentorScreens';
 
 // Participant screens
 import {
-  ParticipantDashboard, TeamDetail, SubmitProject, ViewResults, NotificationsPage,
+  ParticipantDashboard, TeamDetail, SubmitProject, ViewResults, NotificationsPage, MyInvitationsPage,
 } from './screens/ParticipantScreens';
 
 // Template screens
@@ -79,6 +79,7 @@ const breadcrumbs: Record<string, string[]> = {
   'mentor-category': ['SEAL', 'Mentor', 'Category View'],
   'participant-dashboard': ['SEAL', 'Participant', 'Dashboard'],
   'participant-team': ['SEAL', 'Participant', 'My Team'],
+  'participant-invitations': ['SEAL', 'Participant', 'My Invitations'],
   'participant-submit': ['SEAL', 'Participant', 'Submit Project'],
   'participant-results': ['SEAL', 'Participant', 'Results'],
   'participant-notifications': ['SEAL', 'Participant', 'Notifications'],
@@ -200,14 +201,16 @@ export default function App() {
             onNavigate={navigate}
           />
           <main className="flex-1 overflow-y-auto">
-            <ScreenRenderer
-              screen={currentScreen}
-              role={currentRole}
-              onNavigate={navigate}
-              onRoleLogin={handleRoleLogin}
-              selectedEventId={selectedEventId}
-              onSelectEvent={handleSelectEvent}
-            />
+            <ScreenErrorBoundary screen={currentScreen}>
+              <ScreenRenderer
+                screen={currentScreen}
+                role={currentRole}
+                onNavigate={navigate}
+                onRoleLogin={handleRoleLogin}
+                selectedEventId={selectedEventId}
+                onSelectEvent={handleSelectEvent}
+              />
+            </ScreenErrorBoundary>
           </main>
         </div>
       </div>
@@ -216,6 +219,53 @@ export default function App() {
 }
 
 // ── Screen Renderer ──────────────────────────────────────────────────────────
+interface ScreenErrorBoundaryProps {
+  screen: string;
+  children: React.ReactNode;
+}
+
+interface ScreenErrorBoundaryState {
+  error: Error | null;
+}
+
+class ScreenErrorBoundary extends React.Component<ScreenErrorBoundaryProps, ScreenErrorBoundaryState> {
+  state: ScreenErrorBoundaryState = { error: null };
+
+  static getDerivedStateFromError(error: Error): ScreenErrorBoundaryState {
+    return { error };
+  }
+
+  componentDidUpdate(prevProps: ScreenErrorBoundaryProps) {
+    if (prevProps.screen !== this.props.screen && this.state.error) {
+      this.setState({ error: null });
+    }
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+
+    return (
+      <div className="flex min-h-full items-center justify-center p-8">
+        <div className="max-w-md rounded-xl border border-red-200 bg-white p-6 text-center shadow-sm">
+          <AlertTriangle className="mx-auto mb-3 h-9 w-9 text-red-500" />
+          <h2 className="mb-1 text-lg font-bold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>
+            Có lỗi, thử lại
+          </h2>
+          <p className="mb-4 text-sm text-slate-500">
+            Màn hình này gặp lỗi khi tải. Thử lại hoặc chuyển sang màn khác.
+          </p>
+          <button
+            onClick={() => this.setState({ error: null })}
+            className="rounded-lg bg-blue-800 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-900"
+          >
+            Thử lại
+          </button>
+        </div>
+      </div>
+    );
+  }
+}
+
 interface RendererProps {
   screen: string;
   role: Role;
@@ -273,6 +323,7 @@ function ScreenRenderer({ screen, role, onNavigate, onRoleLogin, selectedEventId
     // Participant
     case 'participant-dashboard': return <ParticipantDashboard onNavigate={onNavigate} />;
     case 'participant-team': return <TeamDetail onNavigate={onNavigate} />;
+    case 'participant-invitations': return <MyInvitationsPage />;
     case 'participant-submit': return <SubmitProject />;
     case 'participant-results': return <ViewResults />;
     case 'participant-notifications': return <NotificationsPage />;

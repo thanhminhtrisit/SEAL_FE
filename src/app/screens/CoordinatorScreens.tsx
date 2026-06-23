@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Calendar, Plus, ChevronRight, CheckCircle2, Clock, AlertTriangle, Users, Send, Lock, Trophy, Globe, FileBarChart, Eye, Edit2, UserCheck, UserX, Search, Download, Check, BarChart2, GraduationCap, Building2, RefreshCw, ArrowLeft, Layers, Tag, List } from 'lucide-react';
+import { Calendar, Plus, ChevronRight, CheckCircle2, Clock, AlertTriangle, Users, Send, Lock, Trophy, Globe, FileBarChart, Eye, Edit2, UserCheck, UserX, Search, Download, Check, BarChart2, GraduationCap, Building2, RefreshCw, ArrowLeft, Layers, Tag, List, XCircle, Gavel, Copy, Key, PlayCircle, Archive } from 'lucide-react';
 import { toast } from 'sonner';
 import { KPICard } from '../components/shared/KPICard';
 import { StatusBadge } from '../components/shared/Badge';
@@ -19,6 +19,10 @@ import {
   createBudget,
   createBudgetItem,
   submitEvent,
+  openEvent,
+  startEvent,
+  completeEvent,
+  archiveEvent,
   getEvent,
   getEventRounds,
   getEventCategories,
@@ -30,6 +34,11 @@ import {
   type EventType,
 } from '../../api/events';
 import { getDisciplines, getTermPlans, getBudgetCategories, type Discipline, type TermPlan, type BudgetCategory } from '../../api/governance';
+import { getTeamsByEvent, reviewTeam, type TeamSummary } from '../../api/teams';
+import {
+  getJudges, getRoundJudges, assignJudge, revokeJudge, createGuestJudge,
+  type JudgeUser, type RoundJudge, type CreateGuestJudgeResponse,
+} from '../../api/judges';
 
 function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: React.ReactNode }) {
   return (
@@ -39,6 +48,10 @@ function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: st
       {actions && <div className="flex items-center gap-2">{actions}</div>}
     </div>
   );
+}
+
+function safeArray<T>(value: T[] | null | undefined): T[] {
+  return Array.isArray(value) ? value : [];
 }
 
 const sampleEvent = {
@@ -195,7 +208,7 @@ export function EventList({ onNavigate, onSelectEvent }: EventListProps) {
     setLoading(true);
     setError(null);
     try {
-      setEvents(await getEvents());
+      setEvents(safeArray(await getEvents()));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Không tải được danh sách event');
     } finally {
@@ -306,6 +319,16 @@ export function EventList({ onNavigate, onSelectEvent }: EventListProps) {
   );
 }
 
+// Converts date/datetime-local string to ISO LocalDateTime expected by BE.
+// date-only "YYYY-MM-DD"  → "YYYY-MM-DDTHH:mm:ss" (start or end of day)
+// datetime-local "YYYY-MM-DDTHH:mm" → "YYYY-MM-DDTHH:mm:ss" (append :00)
+// empty/undefined         → undefined (field omitted)
+function toDateTime(val: string, endOfDay = false): string | undefined {
+  if (!val) return undefined;
+  if (val.includes('T')) return val.length === 16 ? `${val}:00` : val;
+  return endOfDay ? `${val}T23:59:59` : `${val}T00:00:00`;
+}
+
 const WIZARD_STEPS = ['Basic Info', 'Rounds', 'Categories', 'Criteria', 'Budget', 'Review & Submit'];
 
 interface RoundForm { name: string; submissionDeadline: string; promotionTopN: number | ''; isFinalRound: boolean; }
@@ -377,7 +400,7 @@ export function CreateEventWizard({ onNavigate }: { onNavigate: (s: string) => v
 
   useEffect(() => {
     Promise.all([getDisciplines(), getTermPlans(), getBudgetCategories()])
-      .then(([d, tp, bc]) => { setDisciplines(d); setAllTermPlans(tp); setBudgetCategories(bc); })
+      .then(([d, tp, bc]) => { setDisciplines(safeArray(d)); setAllTermPlans(safeArray(tp)); setBudgetCategories(safeArray(bc)); })
       .catch(err => toast.error(err instanceof Error ? err.message : 'Không tải được dữ liệu'))
       .finally(() => setLoadingMeta(false));
   }, []);
@@ -402,29 +425,31 @@ export function CreateEventWizard({ onNavigate }: { onNavigate: (s: string) => v
           termPlanId: termPlanId as number,
           eventType: autoEventType,
           description: description.trim() || undefined,
-          registrationStart: regStart || undefined,
-          registrationEnd: regEnd || undefined,
+          registrationStart: toDateTime(regStart),
+          registrationEnd: toDateTime(regEnd, true),
         });
         setEventId(ev.id);
         toast.success(`Event "${ev.name}" đã được tạo (DRAFT)`);
       } else if (step === 1 && roundIds.length === 0 && eventId) {
-        const saved = await Promise.all(
-          rounds.map((r, i) => createRound(eventId, {
+        const saved: EventRound[] = [];
+        for (const [i, r] of rounds.entries()) {
+          saved.push(await createRound(eventId, {
             name: r.name,
             orderNumber: i + 1,
-            submissionDeadline: r.submissionDeadline || undefined,
+            submissionDeadline: toDateTime(r.submissionDeadline, true),
             promotionTopN: typeof r.promotionTopN === 'number' ? r.promotionTopN : undefined,
             isFinalRound: r.isFinalRound,
-          }))
-        );
+          }));
+        }
         setRoundIds(saved.map(r => r.id));
       } else if (step === 2 && categoryIds.length === 0 && eventId) {
-        const saved = await Promise.all(
-          categories.map(cat => createCategory(eventId, {
+        const saved: EventCategory[] = [];
+        for (const cat of categories) {
+          saved.push(await createCategory(eventId, {
             name: cat.name,
             description: cat.description || undefined,
-          }))
-        );
+          }));
+        }
         setCategoryIds(saved.map(c => c.id));
       } else if (step === 3 && criteriaSetId === null && eventId) {
         if (totalWeight !== 100) { toast.error(`Tổng weight phải bằng 100%. Hiện tại: ${totalWeight}%`); return; }
@@ -444,14 +469,14 @@ export function CreateEventWizard({ onNavigate }: { onNavigate: (s: string) => v
       } else if (step === 4 && budgetId === null && eventId) {
         const budget = await createBudget(eventId, { currency: 'VND' });
         const validItems = budgetItems.filter(i => i.categoryId !== '' && i.description.trim());
-        await Promise.all(
-          validItems.map(i => createBudgetItem(eventId, {
+        for (const i of validItems) {
+          await createBudgetItem(eventId, {
             categoryId: i.categoryId as number,
             description: i.description.trim(),
             quantity: i.quantity,
             unitCost: i.unitCost,
-          }))
-        );
+          });
+        }
         setBudgetId(budget.id);
       }
       advance(step + 1);
@@ -925,51 +950,417 @@ export function SubmissionMonitor() {
 }
 
 export function JudgeAssignment() {
+  // Meta
+  const [events, setEvents] = useState<EventSummary[]>([]);
+  const [judgePool, setJudgePool] = useState<JudgeUser[]>([]);
+  const [loadingMeta, setLoadingMeta] = useState(true);
+
+  // Selectors
+  const [selectedEventId, setSelectedEventId] = useState<number | ''>('');
+  const [selectedRoundId, setSelectedRoundId] = useState<number | ''>('');
+  const [rounds, setRounds] = useState<EventRound[]>([]);
+  const [loadingRounds, setLoadingRounds] = useState(false);
+
+  // Assigned judges for selected round
+  const [assigned, setAssigned] = useState<RoundJudge[]>([]);
+  const [loadingAssigned, setLoadingAssigned] = useState(false);
+
+  // Assign action
+  const [selectedJudgeId, setSelectedJudgeId] = useState<number | ''>('');
+  const [assigning, setAssigning] = useState(false);
+
+  // Remove action
+  const [removingId, setRemovingId] = useState<number | null>(null);
+
+  // Create Guest Judge dialog
   const [showCreate, setShowCreate] = useState(false);
+  const [guestName, setGuestName] = useState('');
+  const [guestEmail, setGuestEmail] = useState('');
+  const [guestPhone, setGuestPhone] = useState('');
+  const [creatingGuest, setCreatingGuest] = useState(false);
+  const [tempResult, setTempResult] = useState<CreateGuestJudgeResponse | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  // Load events + judge pool on mount
+  useEffect(() => {
+    Promise.all([getEvents(), getJudges()])
+      .then(([evs, pool]) => { setEvents(safeArray(evs)); setJudgePool(safeArray(pool)); })
+      .catch(err => toast.error(err instanceof Error ? err.message : 'Không tải được dữ liệu'))
+      .finally(() => setLoadingMeta(false));
+  }, []);
+
+  // Load rounds when event changes
+  useEffect(() => {
+    if (selectedEventId === '') { setRounds([]); setSelectedRoundId(''); setAssigned([]); return; }
+    setLoadingRounds(true);
+    getEventRounds(selectedEventId as number)
+      .then(roundList => setRounds(safeArray(roundList)))
+      .catch(err => toast.error(err instanceof Error ? err.message : 'Không tải được rounds'))
+      .finally(() => setLoadingRounds(false));
+    setSelectedRoundId('');
+    setAssigned([]);
+  }, [selectedEventId]);
+
+  const loadAssigned = useCallback(async (eventId: number, roundId: number) => {
+    setLoadingAssigned(true);
+    try {
+      setAssigned(safeArray(await getRoundJudges(eventId, roundId)));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Không tải được danh sách judge');
+    } finally {
+      setLoadingAssigned(false);
+    }
+  }, []);
+
+  // Load assigned judges when round changes
+  useEffect(() => {
+    if (selectedEventId === '' || selectedRoundId === '') { setAssigned([]); return; }
+    loadAssigned(selectedEventId as number, selectedRoundId as number);
+  }, [selectedEventId, selectedRoundId, loadAssigned]);
+
+  const handleAssign = async () => {
+    if (!selectedJudgeId || selectedEventId === '' || selectedRoundId === '') return;
+    setAssigning(true);
+    try {
+      const newAssign = await assignJudge(
+        selectedEventId as number,
+        selectedRoundId as number,
+        { judgeId: selectedJudgeId as number },
+      );
+      setAssigned(prev => [...prev, newAssign]);
+      setSelectedJudgeId('');
+      toast.success('Đã gán judge thành công');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Gán judge thất bại');
+    } finally {
+      setAssigning(false);
+    }
+  };
+
+  const handleRemove = async (a: RoundJudge) => {
+    if (selectedEventId === '' || selectedRoundId === '') return;
+    setRemovingId(a.assignmentId);
+    try {
+      await revokeJudge(selectedEventId as number, selectedRoundId as number, a.assignmentId);
+      setAssigned(prev => prev.filter(x => x.assignmentId !== a.assignmentId));
+      toast.success(`Đã gỡ ${a.fullName} khỏi round`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Gỡ judge thất bại');
+    } finally {
+      setRemovingId(null);
+    }
+  };
+
+  const handleCreateGuest = async () => {
+    if (!guestEmail.trim() || !guestName.trim()) { toast.error('Email và Họ tên là bắt buộc'); return; }
+    setCreatingGuest(true);
+    try {
+      const result = await createGuestJudge({
+        email: guestEmail.trim(),
+        fullName: guestName.trim(),
+        phone: guestPhone.trim() || undefined,
+      });
+      setTempResult(result);
+      // Refresh judge pool so new guest appears in dropdown
+      getJudges().then(pool => setJudgePool(safeArray(pool))).catch(() => {});
+      toast.success(`Guest judge "${result.fullName}" đã được tạo`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Tạo guest judge thất bại');
+    } finally {
+      setCreatingGuest(false);
+    }
+  };
+
+  const handleCloseCreate = () => {
+    setShowCreate(false);
+    setGuestName('');
+    setGuestEmail('');
+    setGuestPhone('');
+    setTempResult(null);
+    setCopied(false);
+  };
+
+  const availableJudges = judgePool.filter(j => !assigned.some(a => a.judgeId === j.id));
+  const selectedRoundName = rounds.find(r => r.id === selectedRoundId)?.name ?? 'Round';
+
   return (
     <div className="p-7 space-y-5">
-      <PageHeader title="Judge Assignment" subtitle="Assign internal and guest judges to rounds"
-        actions={<button onClick={() => setShowCreate(true)} className="flex items-center gap-2 bg-blue-800 hover:bg-blue-900 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"><Plus className="w-4 h-4" /> Add Guest Judge</button>}
+      <PageHeader
+        title="Judge Assignment"
+        subtitle="Assign internal and guest judges to rounds"
+        actions={
+          <button
+            onClick={() => setShowCreate(true)}
+            className="flex items-center gap-2 bg-blue-800 hover:bg-blue-900 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+          >
+            <Plus className="w-4 h-4" /> Create Guest Judge
+          </button>
+        }
       />
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200">
-        <table className="w-full">
-          <thead><tr className="border-b border-slate-100">{['Judge', 'Email', 'Type', 'Assigned Round', 'Progress', 'Status'].map(c => <th key={c} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>)}</tr></thead>
-          <tbody className="divide-y divide-slate-100">
-            {judges.map(j => (
-              <tr key={j.id} className="hover:bg-slate-50 transition-colors">
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-7 h-7 rounded-full bg-blue-700 text-white text-xs font-bold flex items-center justify-center">{j.name.split(' ').slice(-2).map(n => n[0]).join('')}</div>
-                    <span className="text-sm font-medium text-slate-900">{j.name}</span>
-                  </div>
-                </td>
-                <td className="px-4 py-3 text-sm font-mono text-slate-500">{j.email}</td>
-                <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-full font-medium ${j.type === 'INTERNAL' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>{j.type}</span></td>
-                <td className="px-4 py-3 text-sm text-slate-700">{j.round}</td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <div className="w-24 h-2 bg-slate-100 rounded-full"><div className="h-2 bg-blue-600 rounded-full" style={{ width: `${(j.scored / j.total) * 100}%` }} /></div>
-                    <span className="text-xs font-mono text-slate-600">{j.scored}/{j.total}</span>
-                  </div>
-                </td>
-                <td className="px-4 py-3"><StatusBadge status={j.scored === j.total ? 'COMPLETED' : 'IN_PROGRESS'} label={j.scored === j.total ? 'Complete' : 'Scoring'} /></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+
+      {/* Event + Round selectors */}
+      <div className="flex gap-3 flex-wrap items-end">
+        <div className="min-w-[260px]">
+          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Event</label>
+          <select
+            value={selectedEventId}
+            onChange={e => setSelectedEventId(e.target.value === '' ? '' : Number(e.target.value))}
+            disabled={loadingMeta}
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50"
+          >
+            <option value="">{loadingMeta ? 'Đang tải…' : '— Chọn event —'}</option>
+            {events.map(ev => <option key={ev.id} value={ev.id}>{ev.name}</option>)}
+          </select>
+        </div>
+        <div className="min-w-[200px]">
+          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Round</label>
+          <select
+            value={selectedRoundId}
+            onChange={e => setSelectedRoundId(e.target.value === '' ? '' : Number(e.target.value))}
+            disabled={selectedEventId === '' || loadingRounds}
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50"
+          >
+            <option value="">{selectedEventId === '' ? '— Chọn event trước —' : loadingRounds ? 'Đang tải…' : '— Chọn round —'}</option>
+            {rounds.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+          </select>
+        </div>
+        {selectedRoundId !== '' && (
+          <button
+            onClick={() => loadAssigned(selectedEventId as number, selectedRoundId as number)}
+            disabled={loadingAssigned}
+            className="flex items-center gap-1.5 border border-slate-200 text-slate-600 text-sm px-3 py-2 rounded-lg hover:bg-slate-50 disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${loadingAssigned ? 'animate-spin' : ''}`} /> Refresh
+          </button>
+        )}
       </div>
-      {showCreate && (
-        <Modal title="Create Guest Judge Account" onClose={() => setShowCreate(false)} size="md"
-          footer={<><button onClick={() => setShowCreate(false)} className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-lg hover:bg-slate-50">Cancel</button><button onClick={() => setShowCreate(false)} className="px-4 py-2 bg-blue-800 text-white text-sm font-semibold rounded-lg hover:bg-blue-900">Create & Send Invite</button></>}>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div><label className="block text-sm font-medium text-slate-700 mb-1">Full Name</label><input className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" placeholder="Dr. Jane Smith" /></div>
-              <div><label className="block text-sm font-medium text-slate-700 mb-1">Email</label><input className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" placeholder="jane@company.com" /></div>
+
+      {/* Placeholder when no round selected */}
+      {selectedRoundId === '' && (
+        <div className="flex flex-col items-center py-20 gap-3 text-slate-400">
+          <Gavel className="w-10 h-10 text-slate-300" />
+          <p className="text-sm font-medium text-slate-600">Chọn event và round để xem danh sách judge</p>
+        </div>
+      )}
+
+      {/* Main content: assigned table + assign panel */}
+      {selectedRoundId !== '' && (
+        <div className="grid grid-cols-3 gap-5">
+          {/* Assigned judges */}
+          <div className="col-span-2">
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200">
+              <div className="px-5 py-4 border-b border-slate-100">
+                <h3 className="font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>
+                  Assigned Judges
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">{selectedRoundName} — {assigned.length} judge{assigned.length !== 1 ? 's' : ''}</p>
+              </div>
+
+              {loadingAssigned && (
+                <div className="flex items-center justify-center py-16 text-slate-400">
+                  <RefreshCw className="w-4 h-4 animate-spin mr-2" /><span className="text-sm">Đang tải…</span>
+                </div>
+              )}
+
+              {!loadingAssigned && assigned.length === 0 && (
+                <div className="flex flex-col items-center py-12 gap-2 text-slate-400">
+                  <Gavel className="w-8 h-8 text-slate-300" />
+                  <p className="text-sm text-slate-500">Chưa có judge nào được gán cho round này</p>
+                </div>
+              )}
+
+              {!loadingAssigned && assigned.length > 0 && (
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-slate-100">
+                      {['Judge', 'Email', 'Type', ''].map(c => (
+                        <th key={c} className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {assigned.map(a => {
+                      const isRemoving = removingId === a.assignmentId;
+                      const isGuest = a.accountType === 'GUEST_JUDGE';
+                      return (
+                        <tr key={a.assignmentId} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2.5">
+                              <div className={`w-7 h-7 rounded-full text-white text-xs font-bold flex items-center justify-center ${isGuest ? 'bg-amber-600' : 'bg-blue-700'}`}>
+                                {(a.fullName ?? 'Judge').split(' ').pop()?.[0] ?? '?'}
+                              </div>
+                              <span className="text-sm font-medium text-slate-900">{a.fullName ?? 'Judge'}</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-xs font-mono text-slate-500">{a.email ?? '—'}</td>
+                          <td className="px-4 py-3">
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${isGuest ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
+                              {isGuest ? 'Guest' : 'Internal'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              onClick={() => handleRemove(a)}
+                              disabled={removingId !== null}
+                              className="flex items-center gap-1 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 disabled:opacity-50 px-2 py-1 rounded transition-colors ml-auto"
+                            >
+                              {isRemoving
+                                ? <span className="w-3 h-3 border-2 border-red-300 border-t-red-600 rounded-full animate-spin" />
+                                : <XCircle className="w-3.5 h-3.5" />}
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
             </div>
-            <div><label className="block text-sm font-medium text-slate-700 mb-1">Organization</label><input className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" placeholder="Tech Corp Ltd." /></div>
-            <div><label className="block text-sm font-medium text-slate-700 mb-1">Assign to Round</label><select className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"><option>Final Round</option><option>Preliminary Round</option></select></div>
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3"><p className="text-xs text-blue-700">A temporary password will be emailed. Guest judges can only access their assigned rounds.</p></div>
           </div>
+
+          {/* Assign panel */}
+          <div className="space-y-4">
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+              <h4 className="text-sm font-semibold text-slate-900 mb-3">Assign Judge</h4>
+              <div className="space-y-3">
+                <select
+                  value={selectedJudgeId}
+                  onChange={e => setSelectedJudgeId(e.target.value === '' ? '' : Number(e.target.value))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"
+                >
+                  <option value="">
+                    {availableJudges.length === 0 ? 'Tất cả đã được gán' : '— Chọn judge —'}
+                  </option>
+                  {availableJudges.map(j => (
+                    <option key={j.id} value={j.id}>
+                      {j.fullName} ({j.accountType === 'GUEST_JUDGE' ? 'Guest' : 'Internal'})
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleAssign}
+                  disabled={!selectedJudgeId || assigning}
+                  className="w-full flex items-center justify-center gap-2 bg-blue-800 hover:bg-blue-900 disabled:opacity-50 text-white text-sm font-semibold py-2 rounded-lg transition-colors"
+                >
+                  {assigning
+                    ? <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                    : <Check className="w-3.5 h-3.5" />}
+                  Assign to {selectedRoundName}
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+              <p className="text-xs text-slate-500 leading-relaxed">
+                <strong className="text-slate-700">Lưu ý:</strong> Dropdown chỉ hiện judge chưa được gán vào round này.
+                Dùng nút <em>Create Guest Judge</em> để tạo tài khoản mới.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Create Guest Judge dialog ── */}
+      {showCreate && (
+        <Modal
+          title={tempResult ? 'Guest Judge Created' : 'Create Guest Judge Account'}
+          onClose={handleCloseCreate}
+          size="md"
+          footer={
+            tempResult ? (
+              <button onClick={handleCloseCreate} className="px-4 py-2 bg-blue-800 hover:bg-blue-900 text-white text-sm font-semibold rounded-lg">Done</button>
+            ) : (
+              <>
+                <button onClick={handleCloseCreate} disabled={creatingGuest} className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-lg hover:bg-slate-50">Cancel</button>
+                <button
+                  onClick={handleCreateGuest}
+                  disabled={creatingGuest || !guestEmail.trim() || !guestName.trim()}
+                  className="px-4 py-2 bg-blue-800 hover:bg-blue-900 disabled:opacity-50 text-white text-sm font-semibold rounded-lg flex items-center gap-2"
+                >
+                  {creatingGuest && <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
+                  Create Account
+                </button>
+              </>
+            )
+          }
+        >
+          {tempResult ? (
+            /* One-time temp password reveal */
+            <div className="space-y-4">
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 flex items-start gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-semibold text-emerald-800">Tài khoản đã tạo cho {tempResult.fullName}</p>
+                  <p className="text-xs text-emerald-700 mt-0.5">{tempResult.email}</p>
+                </div>
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-slate-800 mb-1.5 flex items-center gap-1.5">
+                  <Key className="w-4 h-4 text-amber-600" />
+                  Mật khẩu tạm thời
+                  <span className="text-xs font-normal text-red-600 ml-1">(hiện một lần duy nhất — copy ngay)</span>
+                </p>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 bg-slate-100 border border-slate-200 rounded-lg px-3 py-2.5 text-sm font-mono font-bold text-slate-900 select-all break-all">
+                    {tempResult.temporaryPassword}
+                  </code>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(tempResult.temporaryPassword);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    }}
+                    className={`flex items-center gap-1.5 text-sm px-3 py-2.5 rounded-lg border transition-colors flex-shrink-0 ${copied ? 'bg-emerald-100 border-emerald-300 text-emerald-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                  >
+                    {copied ? <CheckCircle2 className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                    {copied ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+                <p className="text-xs text-slate-500 mt-2">Judge sẽ cần đổi mật khẩu khi đăng nhập lần đầu. Copy trước khi đóng dialog.</p>
+              </div>
+            </div>
+          ) : (
+            /* Create form */
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Họ và tên <span className="text-red-500">*</span></label>
+                  <input
+                    value={guestName}
+                    onChange={e => setGuestName(e.target.value)}
+                    autoFocus
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"
+                    placeholder="Dr. Jane Smith"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Email <span className="text-red-500">*</span></label>
+                  <input
+                    value={guestEmail}
+                    onChange={e => setGuestEmail(e.target.value)}
+                    type="email"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"
+                    placeholder="jane@company.com"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Số điện thoại <span className="text-slate-400 text-xs font-normal">(tùy chọn)</span>
+                </label>
+                <input
+                  value={guestPhone}
+                  onChange={e => setGuestPhone(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"
+                  placeholder="+84 90 xxx xxxx"
+                />
+              </div>
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <p className="text-xs text-blue-700">Hệ thống sẽ tạo mật khẩu tạm thời và hiển thị một lần. Coordinator tự chia sẻ thông tin đăng nhập cho guest judge.</p>
+              </div>
+            </div>
+          )}
         </Modal>
       )}
     </div>
@@ -977,40 +1368,220 @@ export function JudgeAssignment() {
 }
 
 export function TeamManagement() {
-  const [showDisqualify, setShowDisqualify] = useState(false);
+  const [events, setEvents] = useState<EventSummary[]>([]);
+  const [selectedEventId, setSelectedEventId] = useState<number | ''>('');
+  const [teams, setTeams] = useState<TeamSummary[]>([]);
+  const [loadingEvents, setLoadingEvents] = useState(true);
+  const [loadingTeams, setLoadingTeams] = useState(false);
+
+  // Reject dialog
+  const [rejectTarget, setRejectTarget] = useState<TeamSummary | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [actionId, setActionId] = useState<number | null>(null);
+
+  useEffect(() => {
+    getEvents()
+      .then(eventList => setEvents(safeArray(eventList)))
+      .catch(() => toast.error('Không tải được danh sách event'))
+      .finally(() => setLoadingEvents(false));
+  }, []);
+
+  const loadTeams = useCallback(async (eventId: number) => {
+    setLoadingTeams(true);
+    try {
+      setTeams(safeArray(await getTeamsByEvent(eventId)));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Không tải được danh sách team');
+    } finally {
+      setLoadingTeams(false);
+    }
+  }, []);
+
+  const handleEventChange = (id: number | '') => {
+    setSelectedEventId(id);
+    setTeams([]);
+    if (id !== '') loadTeams(id as number);
+  };
+
+  const handleApprove = async (t: TeamSummary) => {
+    setActionId(t.id);
+    try {
+      await reviewTeam(t.id, { approved: true });
+      setTeams(prev => prev.map(x => x.id === t.id ? { ...x, status: 'APPROVED' } : x));
+      toast.success(`Team "${t.name}" đã được duyệt`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Duyệt thất bại');
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const handleRejectOpen = (t: TeamSummary) => { setRejectTarget(t); setRejectReason(''); };
+
+  const handleRejectSubmit = async () => {
+    if (!rejectTarget) return;
+    if (!rejectReason.trim()) { toast.error('Vui lòng nhập lý do từ chối'); return; }
+    setActionId(rejectTarget.id);
+    try {
+      await reviewTeam(rejectTarget.id, { approved: false, reason: rejectReason.trim() });
+      setTeams(prev => prev.map(x => x.id === rejectTarget.id ? { ...x, status: 'REJECTED' } : x));
+      toast.success(`Đã từ chối team "${rejectTarget.name}"`);
+      setRejectTarget(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Từ chối thất bại');
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const selectedEvent = events.find(e => e.id === selectedEventId);
+
   return (
     <div className="p-7 space-y-5">
-      <PageHeader title="Team Registration" subtitle={`${teams.length} teams registered — SEAL Hackathon Summer 2026`} />
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200">
-        <table className="w-full">
-          <thead><tr className="border-b border-slate-100">{['Team Name', 'Category', 'Leader', 'Members', 'Registered', 'Status', 'Actions'].map(c => <th key={c} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>)}</tr></thead>
-          <tbody className="divide-y divide-slate-100">
-            {teams.map(t => (
-              <tr key={t.id} className="hover:bg-slate-50 transition-colors">
-                <td className="px-4 py-3 text-sm font-semibold text-slate-900">{t.name}</td>
-                <td className="px-4 py-3 text-sm text-slate-600">{t.category}</td>
-                <td className="px-4 py-3 text-sm text-slate-700">{t.leader}</td>
-                <td className="px-4 py-3"><span className={`text-xs font-mono px-2 py-0.5 rounded-full ${t.members >= 3 && t.members <= 5 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>{t.members} / 5</span></td>
-                <td className="px-4 py-3 text-sm font-mono text-slate-500">{t.registered}</td>
-                <td className="px-4 py-3"><StatusBadge status={t.status} /></td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-1">
-                    <button className="p-1.5 text-slate-400 hover:text-blue-700 hover:bg-blue-50 rounded"><Eye className="w-3.5 h-3.5" /></button>
-                    {t.status === 'APPROVED' && <button onClick={() => setShowDisqualify(true)} className="text-xs bg-red-50 text-red-700 hover:bg-red-100 px-2 py-1 rounded font-medium">Disqualify</button>}
-                    {t.status === 'PENDING' && <><button className="text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 px-2 py-1 rounded font-medium">Approve</button><button className="text-xs bg-red-50 text-red-700 hover:bg-red-100 px-2 py-1 rounded font-medium ml-1">Reject</button></>}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <PageHeader
+        title="Team Registration"
+        subtitle={selectedEvent ? `${teams.length} teams — ${selectedEvent.name}` : 'Chọn event để xem danh sách team'}
+        actions={
+          selectedEventId !== '' && (
+            <button onClick={() => loadTeams(selectedEventId as number)} disabled={loadingTeams} className="flex items-center gap-1.5 border border-slate-200 text-slate-600 text-sm px-3 py-2 rounded-lg hover:bg-slate-50 disabled:opacity-50">
+              <RefreshCw className={`w-4 h-4 ${loadingTeams ? 'animate-spin' : ''}`} /> Refresh
+            </button>
+          )
+        }
+      />
+
+      {/* Event selector */}
+      <div className="max-w-sm">
+        <select
+          value={selectedEventId}
+          onChange={e => handleEventChange(e.target.value === '' ? '' : Number(e.target.value))}
+          disabled={loadingEvents}
+          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50"
+        >
+          <option value="">{loadingEvents ? 'Đang tải events…' : '— Chọn event —'}</option>
+          {events.map(ev => <option key={ev.id} value={ev.id}>{ev.name}</option>)}
+        </select>
       </div>
-      {showDisqualify && (
-        <Modal title="Disqualify Team" subtitle="Code Seals — Web Application" onClose={() => setShowDisqualify(false)} size="sm"
-          footer={<><button onClick={() => setShowDisqualify(false)} className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-lg hover:bg-slate-50">Cancel</button><button className="px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700">Disqualify Team</button></>}>
+
+      {/* Loading teams */}
+      {loadingTeams && (
+        <div className="flex items-center justify-center py-16 text-slate-400">
+          <RefreshCw className="w-5 h-5 animate-spin mr-2" /><span className="text-sm">Đang tải team…</span>
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!loadingTeams && selectedEventId !== '' && teams.length === 0 && (
+        <div className="flex flex-col items-center py-16 gap-2 text-slate-400">
+          <Users className="w-10 h-10 text-slate-300" />
+          <p className="text-sm font-medium text-slate-600">Chưa có team nào đăng ký</p>
+        </div>
+      )}
+
+      {/* Prompt to select */}
+      {selectedEventId === '' && !loadingEvents && (
+        <div className="flex flex-col items-center py-16 gap-2 text-slate-400">
+          <Calendar className="w-10 h-10 text-slate-300" />
+          <p className="text-sm font-medium text-slate-600">Chọn event để xem danh sách team</p>
+        </div>
+      )}
+
+      {/* Team table */}
+      {!loadingTeams && teams.length > 0 && (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-slate-100">
+                {['Team Name', 'Category', 'Leader', 'Members', 'Status', 'Actions'].map(c => (
+                  <th key={c} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {teams.map(t => {
+                const mc = t.memberCount ?? 0;
+                const isActive = actionId === t.id;
+                return (
+                  <tr key={t.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-4 py-3 text-sm font-semibold text-slate-900">{t.name}</td>
+                    <td className="px-4 py-3 text-sm text-slate-600">{t.categoryName ?? '—'}</td>
+                    <td className="px-4 py-3 text-sm text-slate-700">{t.leaderName ?? '—'}</td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs font-mono px-2 py-0.5 rounded-full ${mc >= 3 && mc <= 5 ? 'bg-emerald-100 text-emerald-700' : mc === 0 ? 'bg-slate-100 text-slate-500' : 'bg-amber-100 text-amber-700'}`}>
+                        {mc > 0 ? `${mc} / 5` : '—'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3"><StatusBadge status={t.status} /></td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1">
+                        {t.status === 'ACTIVE' && (
+                          <>
+                            <button
+                              onClick={() => handleApprove(t)}
+                              disabled={isActive || mc < 3}
+                              title={mc < 3 ? 'Cần ít nhất 3 thành viên' : 'Approve team'}
+                              className="flex items-center gap-1 text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed px-2 py-1 rounded font-medium transition-colors"
+                            >
+                              {isActive ? <span className="w-3 h-3 border-2 border-emerald-400/40 border-t-emerald-600 rounded-full animate-spin" /> : <Check className="w-3 h-3" />}
+                              Approve
+                            </button>
+                            <button
+                              onClick={() => handleRejectOpen(t)}
+                              disabled={isActive}
+                              className="flex items-center gap-1 text-xs bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-50 px-2 py-1 rounded font-medium transition-colors"
+                            >
+                              <XCircle className="w-3 h-3" /> Reject
+                            </button>
+                          </>
+                        )}
+                        {(t.status === 'APPROVED' || t.status === 'REJECTED') && (
+                          <span className="text-xs text-slate-400 italic">
+                            {t.status === 'APPROVED' ? 'Approved' : 'Rejected'}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Reject dialog */}
+      {rejectTarget && (
+        <Modal
+          title="Reject Team"
+          subtitle={`${rejectTarget.name}${rejectTarget.categoryName ? ` — ${rejectTarget.categoryName}` : ''}`}
+          onClose={() => setRejectTarget(null)}
+          size="sm"
+          footer={
+            <>
+              <button onClick={() => setRejectTarget(null)} disabled={actionId !== null} className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-lg hover:bg-slate-50">Cancel</button>
+              <button onClick={handleRejectSubmit} disabled={actionId !== null || !rejectReason.trim()} className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg flex items-center gap-2">
+                {actionId !== null && <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
+                Reject Team
+              </button>
+            </>
+          }
+        >
           <div className="space-y-3">
-            <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2"><AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" /><p className="text-sm text-red-700">Disqualification is reversible by reinstating the team. The team will be notified with your reason.</p></div>
-            <div><label className="block text-sm font-medium text-slate-700 mb-1">Reason <span className="text-red-500">*</span></label><textarea className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-red-500" rows={3} placeholder="E.g., Submission contains plagiarized code detected by system check" /></div>
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
+              <p className="text-sm text-red-700">Team sẽ nhận được thông báo từ chối kèm lý do.</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Lý do từ chối <span className="text-red-500">*</span></label>
+              <textarea
+                value={rejectReason}
+                onChange={e => setRejectReason(e.target.value)}
+                autoFocus
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-red-500"
+                rows={3}
+                placeholder="VD: Số lượng thành viên không đủ điều kiện tham gia"
+              />
+            </div>
           </div>
         </Modal>
       )}
@@ -1034,7 +1605,7 @@ export function AccountApprovalsPage() {
     setError(null);
     try {
       const data = await getPendingAccounts(0, 50);
-      setAccounts(data.content);
+      setAccounts(safeArray(data.content));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Không tải được danh sách');
     } finally {
@@ -1169,7 +1740,7 @@ export function AccountApprovalsPage() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-xs font-mono text-slate-500">
-                    {acc.createdAt.replace('T', ' ').slice(0, 16)}
+                    {acc.createdAt ? acc.createdAt.replace('T', ' ').slice(0, 16) : '—'}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
@@ -1250,7 +1821,59 @@ export function AccountApprovalsPage() {
   );
 }
 
-// ── Event Detail (read-only) ──────────────────────────────────────────────────
+// ── Lifecycle action config per status ───────────────────────────────────────
+type LifecycleAction = {
+  label: string;
+  Icon: React.ElementType;
+  btnClass: string;
+  requireConfirm?: boolean;
+  confirmTitle?: string;
+  confirmBody?: string;
+};
+
+const LIFECYCLE: Partial<Record<string, LifecycleAction>> = {
+  DRAFT: {
+    label: 'Submit for Approval',
+    Icon: Send,
+    btnClass: 'bg-blue-800 hover:bg-blue-900 text-white',
+    requireConfirm: true,
+    confirmTitle: 'Submit for Approval?',
+    confirmBody: 'Event sẽ chuyển sang PENDING_APPROVAL và bị khoá chỉnh sửa cho đến khi Super Coordinator duyệt. Bạn chắc chắn?',
+  },
+  APPROVED: {
+    label: 'Open Registration',
+    Icon: Globe,
+    btnClass: 'bg-emerald-700 hover:bg-emerald-800 text-white',
+  },
+  OPEN: {
+    label: 'Start Event',
+    Icon: PlayCircle,
+    btnClass: 'bg-blue-700 hover:bg-blue-800 text-white',
+  },
+  IN_PROGRESS: {
+    label: 'Mark as Completed',
+    Icon: Trophy,
+    btnClass: 'bg-purple-700 hover:bg-purple-800 text-white',
+  },
+  COMPLETED: {
+    label: 'Archive',
+    Icon: Archive,
+    btnClass: 'bg-slate-600 hover:bg-slate-700 text-white',
+  },
+};
+
+async function callLifecycleApi(eventId: number, status: string): Promise<void> {
+  switch (status) {
+    case 'DRAFT':       return submitEvent(eventId);
+    case 'APPROVED':    return openEvent(eventId);
+    case 'OPEN':        return startEvent(eventId);
+    case 'IN_PROGRESS': return completeEvent(eventId);
+    case 'COMPLETED':   return archiveEvent(eventId);
+    default: throw new Error('No action for this status');
+  }
+}
+
+// ── Event Detail ──────────────────────────────────────────────────────────────
 export function EventDetailPage({
   eventId,
   onNavigate,
@@ -1265,6 +1888,10 @@ export function EventDetailPage({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Action state
+  const [actionLoading, setActionLoading] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+
   useEffect(() => {
     if (!eventId) return;
     setLoading(true);
@@ -1278,9 +1905,9 @@ export function EventDetailPage({
     ])
       .then(([ev, r, c, cs]) => {
         setEvent(ev);
-        setRounds(r);
-        setCategories(c);
-        setCriteriaSets(cs);
+        setRounds(safeArray(r));
+        setCategories(safeArray(c));
+        setCriteriaSets(safeArray(cs).map(set => ({ ...set, criteria: safeArray(set.criteria) })));
       })
       .catch(err => setError(err instanceof Error ? err.message : 'Không tải được event'))
       .finally(() => setLoading(false));
@@ -1288,6 +1915,22 @@ export function EventDetailPage({
 
   const fmtDate = (s: string | null | undefined) =>
     s ? s.replace('T', ' ').slice(0, 16) : '—';
+
+  const handleAction = async () => {
+    if (!event) return;
+    setShowConfirm(false);
+    setActionLoading(true);
+    try {
+      await callLifecycleApi(eventId, event.status);
+      const updated = await getEvent(eventId);
+      setEvent(updated);
+      toast.success(`Event chuyển sang ${updated.status}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Action thất bại');
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -1309,6 +1952,8 @@ export function EventDetailPage({
       </div>
     );
   }
+
+  const lifecycleAction = LIFECYCLE[event.status];
 
   return (
     <div className="p-7 space-y-6">
@@ -1333,6 +1978,20 @@ export function EventDetailPage({
             <span>Reg: {fmtDate(event.registrationStart)} → {fmtDate(event.registrationEnd)}</span>
           </div>
         </div>
+
+        {/* Lifecycle action button */}
+        {lifecycleAction && (
+          <button
+            onClick={() => lifecycleAction.requireConfirm ? setShowConfirm(true) : handleAction()}
+            disabled={actionLoading}
+            className={`flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-lg transition-colors disabled:opacity-50 flex-shrink-0 ${lifecycleAction.btnClass}`}
+          >
+            {actionLoading
+              ? <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+              : <lifecycleAction.Icon className="w-4 h-4" />}
+            {lifecycleAction.label}
+          </button>
+        )}
       </div>
 
       {/* Rounds */}
@@ -1435,6 +2094,38 @@ export function EventDetailPage({
           </div>
         )}
       </section>
+
+      {/* Submit-for-approval confirmation dialog */}
+      {showConfirm && lifecycleAction?.requireConfirm && (
+        <Modal
+          title={lifecycleAction.confirmTitle ?? 'Xác nhận'}
+          onClose={() => setShowConfirm(false)}
+          size="sm"
+          footer={
+            <>
+              <button
+                onClick={() => setShowConfirm(false)}
+                className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-lg hover:bg-slate-50"
+              >
+                Huỷ
+              </button>
+              <button
+                onClick={handleAction}
+                className="px-4 py-2 bg-blue-800 hover:bg-blue-900 text-white text-sm font-semibold rounded-lg flex items-center gap-2"
+              >
+                <Send className="w-4 h-4" /> Xác nhận Submit
+              </button>
+            </>
+          }
+        >
+          <div className="space-y-3">
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+              <p className="text-sm text-amber-800">{lifecycleAction.confirmBody}</p>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

@@ -5,7 +5,7 @@ import {
   UserCheck, Gavel, TrendingUp, Target, Send, Eye, GitBranch,
   Database, Lock, Bell, ChevronRight, PanelLeftClose, PanelLeftOpen,
   Code2, Briefcase, FolderOpen, Activity, Globe, FileBarChart, Zap,
-  UserPlus, ServerCog, AlertTriangle, Star, Trophy, FilePen
+  UserPlus, ServerCog, AlertTriangle, Star, Trophy, FilePen, Inbox
 } from 'lucide-react';
 import type { Role, Screen } from '../types';
 
@@ -140,6 +140,7 @@ const navConfig: Record<Role, NavSection[]> = {
       items: [
         { label: 'Dashboard', icon: LayoutDashboard, screen: 'participant-dashboard' },
         { label: 'My Team', icon: Users, screen: 'participant-team' },
+        { label: 'My Invitations', icon: Inbox, screen: 'participant-invitations' },
         { label: 'Submit Project', icon: Send, screen: 'participant-submit' },
         { label: 'Results', icon: Trophy, screen: 'participant-results' },
         { label: 'Notifications', icon: Bell, screen: 'participant-notifications' },
@@ -152,6 +153,7 @@ const navConfig: Record<Role, NavSection[]> = {
       items: [
         { label: 'Dashboard', icon: LayoutDashboard, screen: 'participant-dashboard' },
         { label: 'My Team', icon: Users, screen: 'participant-team' },
+        { label: 'My Invitations', icon: Inbox, screen: 'participant-invitations' },
         { label: 'Submissions', icon: Send, screen: 'participant-submit' },
         { label: 'Results', icon: Trophy, screen: 'participant-results' },
         { label: 'Notifications', icon: Bell, screen: 'participant-notifications' },

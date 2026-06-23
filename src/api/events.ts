@@ -176,3 +176,19 @@ export async function createBudgetItem(eventId: number, req: CreateBudgetItemReq
 export async function submitEvent(eventId: number): Promise<void> {
   await apiClient.post(`/api/events/${eventId}/submit`);
 }
+
+export async function openEvent(eventId: number): Promise<void> {
+  await apiClient.post(`/api/events/${eventId}/open`);
+}
+
+export async function startEvent(eventId: number): Promise<void> {
+  await apiClient.post(`/api/events/${eventId}/start`);
+}
+
+export async function completeEvent(eventId: number): Promise<void> {
+  await apiClient.post(`/api/events/${eventId}/complete`);
+}
+
+export async function archiveEvent(eventId: number): Promise<void> {
+  await apiClient.post(`/api/events/${eventId}/archive`);
+}
