@@ -1519,7 +1519,7 @@ export function TeamManagement() {
               {teams.map(t => {
                 const mc = t.memberCount ?? 0;
                 const isActive = actionId === t.id;
-                const canReview = t.status === 'ACTIVE' || t.status === 'PENDING';
+                const canReview = t.status === 'ACTIVE' || t.status === 'PENDING' || t.status === 'REGISTERED';
                 return (
                   <tr key={t.id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-4 py-3 text-sm font-semibold text-slate-900">{t.name}</td>
