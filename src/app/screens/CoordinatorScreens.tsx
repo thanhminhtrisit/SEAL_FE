@@ -810,20 +810,20 @@ export function CreateEventWizard({ onNavigate }: { onNavigate: (s: string) => v
                   ))}
                 </div>
               </div>
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex items-start gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
                 <div>
-                  <p className="text-sm font-semibold text-amber-800">Submitting for Approval</p>
-                  <p className="text-sm text-amber-700 mt-1">This event will be sent to the Super Coordinator for review. You cannot edit the event while it is under review.</p>
+                  <p className="text-sm font-semibold text-emerald-800">Configuration Saved</p>
+                  <p className="text-sm text-emerald-700 mt-1">Review the event from My Events. Submit for approval from Event Detail after assigning judges.</p>
                 </div>
               </div>
               <button
-                onClick={handleSubmit}
+                onClick={() => onNavigate('coord-events')}
                 disabled={saving || !eventId}
                 className="w-full bg-blue-800 hover:bg-blue-900 disabled:opacity-50 text-white font-semibold py-3 rounded-xl text-sm transition-colors flex items-center justify-center gap-2"
               >
-                {saving ? <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> : <Send className="w-4 h-4" />}
-                Submit Event for Approval
+                {saving ? <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                Finish Configuration
               </button>
             </div>
           )}
@@ -1501,6 +1501,7 @@ export function TeamManagement() {
               {teams.map(t => {
                 const mc = t.memberCount ?? 0;
                 const isActive = actionId === t.id;
+                const canReview = t.status === 'ACTIVE' || t.status === 'PENDING';
                 return (
                   <tr key={t.id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-4 py-3 text-sm font-semibold text-slate-900">{t.name}</td>
@@ -1514,12 +1515,12 @@ export function TeamManagement() {
                     <td className="px-4 py-3"><StatusBadge status={t.status} /></td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1">
-                        {t.status === 'ACTIVE' && (
+                        {canReview && (
                           <>
                             <button
                               onClick={() => handleApprove(t)}
-                              disabled={isActive || mc < 3}
-                              title={mc < 3 ? 'Cần ít nhất 3 thành viên' : 'Approve team'}
+                              disabled={isActive}
+                              title="Approve team"
                               className="flex items-center gap-1 text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed px-2 py-1 rounded font-medium transition-colors"
                             >
                               {isActive ? <span className="w-3 h-3 border-2 border-emerald-400/40 border-t-emerald-600 rounded-full animate-spin" /> : <Check className="w-3 h-3" />}
