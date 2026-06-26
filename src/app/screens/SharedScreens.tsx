@@ -1,92 +1,151 @@
-import React, { useState } from 'react';
-import { User, Mail, Phone, Building2, GraduationCap, Edit2, Save, Shield, AlertTriangle, Bell, CheckCircle2, Info, Lock } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { User, Mail, Phone, Building2, GraduationCap, Shield, AlertTriangle, Lock, RefreshCw, Calendar, Clock } from 'lucide-react';
+import { getMe, type MeResponse } from '../../api/auth';
+
+function avatarInitials(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function fmtDateTime(s: string | null | undefined): string {
+  if (!s) return '—';
+  return s.replace('T', ' ').slice(0, 16);
+}
 
 export function ProfilePage({ currentRole }: { currentRole: string }) {
-  const [editing, setEditing] = useState(false);
+  const [me, setMe] = useState<MeResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const isParticipant = currentRole === 'TEAM_LEADER' || currentRole === 'TEAM_MEMBER';
-  const isStaff = !isParticipant && currentRole !== 'PUBLIC';
-
-  const profiles: Record<string, { name: string; email: string; phone: string; affiliation: string; studentId?: string; university?: string; role: string; avatar: string }> = {
-    ADMIN: { name: 'Nguyen Van An', email: 'an.nv@fpt.edu.vn', phone: '0901 000 001', affiliation: 'FPT University HCMC — IT Dept.', role: 'Platform Administrator', avatar: 'NA' },
-    SUPER_COORDINATOR: { name: 'Tran Thi Bich', email: 'bich.tt@fpt.edu.vn', phone: '0901 111 222', affiliation: 'FPT University HCMC — SE Dept.', role: 'Super Coordinator', avatar: 'TB' },
-    EVENT_COORDINATOR: { name: 'Le Minh Cuong', email: 'cuong.lm@fpt.edu.vn', phone: '0901 333 444', affiliation: 'FPT University HCMC — SE Dept.', role: 'Event Coordinator', avatar: 'LC' },
-    INTERNAL_JUDGE: { name: 'Pham Duc Dat', email: 'dat.pd@fpt.edu.vn', phone: '0901 555 666', affiliation: 'FPT University HCMC — SE Dept.', role: 'Internal Judge', avatar: 'PD' },
-    GUEST_JUDGE: { name: 'Dr. Sarah Chen', email: 'schen@industry.com', phone: '+1 415 555 0123', affiliation: 'TechCorp Inc.', role: 'Guest Judge', avatar: 'SC' },
-    MENTOR: { name: 'Hoang Thi Em', email: 'em.ht@fpt.edu.vn', phone: '0901 777 888', affiliation: 'FPT University HCMC — SE Dept.', role: 'Mentor', avatar: 'HE' },
-    TEAM_LEADER: { name: 'Nguyen Thanh Phong', email: 'phong.nt@student.fpt.edu.vn', phone: '0912 345 678', affiliation: 'FPT University HCMC', studentId: 'SE171234', role: 'Team Leader', avatar: 'NP' },
-    TEAM_MEMBER: { name: 'Do Thi Quynh', email: 'quynh.dt@student.fpt.edu.vn', phone: '0923 456 789', affiliation: 'FPT University HCMC', studentId: 'SE171390', role: 'Team Member', avatar: 'DQ' },
-    PUBLIC: { name: 'Guest', email: '', phone: '', affiliation: '', role: 'Guest', avatar: 'GU' },
+  const load = () => {
+    setLoading(true);
+    setError(null);
+    getMe()
+      .then(setMe)
+      .catch(err => setError(err instanceof Error ? err.message : 'Không tải được hồ sơ'))
+      .finally(() => setLoading(false));
   };
 
-  const profile = profiles[currentRole] || profiles.PUBLIC;
+  useEffect(() => { load(); }, []);
+
+  if (loading) {
+    return (
+      <div className="p-7 flex items-center justify-center py-20 text-slate-400">
+        <RefreshCw className="w-5 h-5 animate-spin mr-2" />
+        <span className="text-sm">Đang tải hồ sơ…</span>
+      </div>
+    );
+  }
+
+  if (error || !me) {
+    return (
+      <div className="p-7 flex flex-col items-center py-20 gap-3">
+        <AlertTriangle className="w-8 h-8 text-red-400" />
+        <p className="text-sm text-red-600">{error ?? 'Không tải được hồ sơ'}</p>
+        <button onClick={load} className="text-sm text-blue-700 underline">Thử lại</button>
+      </div>
+    );
+  }
+
+  const isParticipant = currentRole === 'TEAM_LEADER' || currentRole === 'TEAM_MEMBER';
+  const hasStudentInfo = !!(me.studentId || me.university);
 
   return (
     <div className="p-7 max-w-2xl">
-      <div className="flex items-start justify-between mb-7">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>My Profile</h1>
-          <p className="text-sm text-slate-500 mt-0.5">View and edit your personal information</p>
-        </div>
-        <button onClick={() => setEditing(!editing)} className={`flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-lg transition-colors ${editing ? 'bg-blue-800 text-white hover:bg-blue-900' : 'border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-          {editing ? <><Save className="w-4 h-4" /> Save Changes</> : <><Edit2 className="w-4 h-4" /> Edit Profile</>}
-        </button>
+      <div className="mb-7">
+        <h1 className="text-xl font-bold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>My Profile</h1>
+        <p className="text-sm text-slate-500 mt-0.5">Hồ sơ tài khoản từ hệ thống SEAL</p>
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 space-y-6">
         {/* Avatar & Role */}
         <div className="flex items-center gap-5 pb-5 border-b border-slate-100">
-          <div className="w-16 h-16 rounded-full bg-blue-700 text-white flex items-center justify-center text-xl font-bold" style={{ fontFamily: 'var(--font-display)' }}>
-            {profile.avatar}
+          <div className="w-16 h-16 rounded-full bg-blue-700 text-white flex items-center justify-center text-xl font-bold flex-shrink-0" style={{ fontFamily: 'var(--font-display)' }}>
+            {avatarInitials(me.fullName)}
           </div>
-          <div>
-            <h2 className="text-lg font-bold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>{profile.name}</h2>
-            <span className="text-xs font-medium text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">{profile.role}</span>
+          <div className="min-w-0">
+            <h2 className="text-lg font-bold text-slate-900 truncate" style={{ fontFamily: 'var(--font-display)' }}>{me.fullName}</h2>
+            <div className="flex flex-wrap items-center gap-2 mt-1">
+              <span className="text-xs font-medium text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full font-mono">{me.roleCode}</span>
+              <span className="text-xs font-medium text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full">{me.accountType}</span>
+              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${me.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                {me.status}
+              </span>
+            </div>
           </div>
         </div>
 
-        {/* Fields */}
+        {/* Core fields */}
         <div className="grid grid-cols-2 gap-5">
           {[
-            { label: 'Full Name', value: profile.name, icon: User, type: 'text' },
-            { label: 'Email Address', value: profile.email, icon: Mail, type: 'email' },
-            { label: 'Phone Number', value: profile.phone, icon: Phone, type: 'tel' },
-            { label: 'Affiliation', value: profile.affiliation, icon: Building2, type: 'text' },
+            { label: 'Full Name', value: me.fullName, icon: User },
+            { label: 'Email', value: me.email, icon: Mail },
+            { label: 'Phone', value: me.phone ?? '—', icon: Phone },
+            { label: 'Account Type', value: me.accountType, icon: Shield },
           ].map(f => (
             <div key={f.label}>
               <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                <span className="flex items-center gap-1.5"><f.icon className="w-3.5 h-3.5 text-slate-400" />{f.label}</span>
+                <span className="flex items-center gap-1.5">
+                  <f.icon className="w-3.5 h-3.5 text-slate-400" />{f.label}
+                </span>
               </label>
-              {editing ? (
-                <input type={f.type} defaultValue={f.value} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" />
-              ) : (
-                <p className="text-sm text-slate-900 bg-slate-50 px-3 py-2 rounded-lg">{f.value || '—'}</p>
-              )}
+              <p className="text-sm text-slate-900 bg-slate-50 px-3 py-2 rounded-lg break-all">{f.value || '—'}</p>
             </div>
           ))}
         </div>
 
-        {/* Participant-specific fields */}
-        {isParticipant && (
+        {/* Student fields (participant or any account with studentId/university) */}
+        {(isParticipant || hasStudentInfo) && (
           <div className="pt-4 border-t border-slate-100 grid grid-cols-2 gap-5">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                <span className="flex items-center gap-1.5"><GraduationCap className="w-3.5 h-3.5 text-slate-400" />Student ID</span>
-              </label>
-              {editing ? (
-                <input defaultValue={profile.studentId} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-700" />
-              ) : (
-                <p className="text-sm font-mono text-slate-900 bg-slate-50 px-3 py-2 rounded-lg">{profile.studentId}</p>
-              )}
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">Account Type</label>
-              <p className="text-sm text-slate-900 bg-slate-50 px-3 py-2 rounded-lg">FPT Student</p>
-            </div>
+            {me.studentId && (
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                  <span className="flex items-center gap-1.5">
+                    <GraduationCap className="w-3.5 h-3.5 text-slate-400" />Student ID
+                  </span>
+                </label>
+                <p className="text-sm font-mono text-slate-900 bg-slate-50 px-3 py-2 rounded-lg">{me.studentId}</p>
+              </div>
+            )}
+            {me.university && (
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                  <span className="flex items-center gap-1.5">
+                    <Building2 className="w-3.5 h-3.5 text-slate-400" />University
+                  </span>
+                </label>
+                <p className="text-sm text-slate-900 bg-slate-50 px-3 py-2 rounded-lg">{me.university}</p>
+              </div>
+            )}
+            {me.isFptStudent != null && (
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">FPT Student</label>
+                <p className="text-sm text-slate-900 bg-slate-50 px-3 py-2 rounded-lg">
+                  {me.isFptStudent ? 'Yes' : 'No (External)'}
+                </p>
+              </div>
+            )}
           </div>
         )}
 
-        {/* Security Section */}
+        {/* Timestamps */}
+        <div className="pt-4 border-t border-slate-100 grid grid-cols-2 gap-5">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 text-slate-400" />Last Login</span>
+            </label>
+            <p className="text-sm font-mono text-slate-900 bg-slate-50 px-3 py-2 rounded-lg">{fmtDateTime(me.lastLoginAt)}</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              <span className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5 text-slate-400" />Account Created</span>
+            </label>
+            <p className="text-sm font-mono text-slate-900 bg-slate-50 px-3 py-2 rounded-lg">{fmtDateTime(me.createdAt)}</p>
+          </div>
+        </div>
+
+        {/* Security section */}
         <div className="pt-4 border-t border-slate-100">
           <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
             <Lock className="w-4 h-4 text-slate-400" />Security
@@ -94,7 +153,7 @@ export function ProfilePage({ currentRole }: { currentRole: string }) {
           <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
             <div>
               <p className="text-sm font-medium text-slate-900">Password</p>
-              <p className="text-xs text-slate-500">Last changed 30 days ago</p>
+              <p className="text-xs text-slate-500">Đổi mật khẩu khi cần thiết</p>
             </div>
             <button className="text-sm text-blue-700 font-medium hover:text-blue-800">Change Password</button>
           </div>

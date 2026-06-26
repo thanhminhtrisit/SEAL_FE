@@ -29,6 +29,28 @@ export async function registerApi(
   return data;
 }
 
+export interface MeResponse {
+  id: number;
+  email: string;
+  fullName: string;
+  phone?: string | null;
+  roleCode: string;
+  accountType: string;
+  status: string;
+  studentId?: string | null;
+  university?: string | null;
+  isFptStudent?: boolean | null;
+  lastLoginAt?: string | null;
+  createdAt?: string | null;
+}
+
+export async function getMe(): Promise<MeResponse> {
+  const res = await apiClient.get<ApiResponse<MeResponse>>('/api/auth/me');
+  const data = res.data.data;
+  if (!data) throw new Error(res.data.message ?? 'Failed to fetch profile');
+  return data;
+}
+
 export async function logoutApi(): Promise<void> {
   // Best-effort — ignore errors (token may already be invalid)
   try {
