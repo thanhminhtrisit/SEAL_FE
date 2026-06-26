@@ -98,16 +98,24 @@ const defaultScreenByRole: Record<Role, string> = {
 
 const publicScreens = new Set(['landing', 'login', 'register', 'pending']);
 
+const screenByPath: Record<string, string> = {
+  '/submission-tracking': 'participant-submit',
+};
+
+function screenFromPath(): string | null {
+  return screenByPath[window.location.pathname] ?? null;
+}
+
 export default function App() {
   const auth = useAuth();
   const [currentRole, setCurrentRole] = useState<Role>('PUBLIC');
-  const [currentScreen, setCurrentScreen] = useState<string>('landing');
+  const [currentScreen, setCurrentScreen] = useState<string>(() => screenFromPath() ?? 'landing');
 
   // Restore session from localStorage token on mount / auth state change
   useEffect(() => {
     if (auth.isAuthenticated && auth.role) {
       setCurrentRole(auth.role);
-      setCurrentScreen(defaultScreenByRole[auth.role]);
+      setCurrentScreen(screenFromPath() ?? defaultScreenByRole[auth.role]);
     }
   }, [auth.isAuthenticated, auth.role]);
 
@@ -122,6 +130,11 @@ export default function App() {
   }, []);
 
   const navigate = useCallback((screen: string) => {
+    if (screen === 'participant-submit' && window.location.pathname !== '/submission-tracking') {
+      window.history.pushState(null, '', '/submission-tracking');
+    } else if (screen !== 'participant-submit' && window.location.pathname === '/submission-tracking') {
+      window.history.pushState(null, '', '/');
+    }
     setCurrentScreen(screen);
   }, []);
 
