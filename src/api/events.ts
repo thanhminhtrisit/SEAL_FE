@@ -192,3 +192,74 @@ export async function completeEvent(eventId: number): Promise<void> {
 export async function archiveEvent(eventId: number): Promise<void> {
   await apiClient.post(`/api/events/${eventId}/archive`);
 }
+
+// ── Edit / Delete APIs ────────────────────────────────────────────────────────
+
+export interface UpdateCriteriaSetRequest {
+  name: string;
+  criteria: {
+    name: string;
+    description?: string;
+    maxScore: number;
+    weight: number;
+    displayOrder: number;
+  }[];
+}
+
+export async function updateCriteriaSet(
+  eventId: number,
+  csId: number,
+  req: UpdateCriteriaSetRequest,
+): Promise<CriteriaSet> {
+  const res = await apiClient.put<ApiResponse<CriteriaSet>>(
+    `/api/events/${eventId}/criteria-sets/${csId}`,
+    req,
+  );
+  const data = res.data.data;
+  if (!data) throw new Error(res.data.message ?? 'Update criteria set failed');
+  return data;
+}
+
+export async function deleteCriteriaSet(eventId: number, csId: number): Promise<void> {
+  await apiClient.delete(`/api/events/${eventId}/criteria-sets/${csId}`);
+}
+
+export async function deleteRound(eventId: number, roundId: number): Promise<void> {
+  await apiClient.delete(`/api/events/${eventId}/rounds/${roundId}`);
+}
+
+export async function deleteCategory(eventId: number, categoryId: number): Promise<void> {
+  await apiClient.delete(`/api/events/${eventId}/categories/${categoryId}`);
+}
+
+export interface BudgetItem {
+  id: number;
+  categoryId: number;
+  categoryName?: string;
+  description: string;
+  quantity: number;
+  unitCost: number;
+}
+
+export async function getBudgetItems(eventId: number): Promise<BudgetItem[]> {
+  const res = await apiClient.get<ApiResponse<BudgetItem[]>>(`/api/events/${eventId}/budget/items`);
+  return res.data.data ?? [];
+}
+
+export async function patchBudgetItem(
+  eventId: number,
+  itemId: number,
+  req: { description?: string; quantity?: number; unitCost?: number },
+): Promise<BudgetItem> {
+  const res = await apiClient.patch<ApiResponse<BudgetItem>>(
+    `/api/events/${eventId}/budget/items/${itemId}`,
+    req,
+  );
+  const data = res.data.data;
+  if (!data) throw new Error(res.data.message ?? 'Update budget item failed');
+  return data;
+}
+
+export async function deleteBudgetItem(eventId: number, itemId: number): Promise<void> {
+  await apiClient.delete(`/api/events/${eventId}/budget/items/${itemId}`);
+}

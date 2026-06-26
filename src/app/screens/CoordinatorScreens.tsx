@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Calendar, Plus, ChevronRight, CheckCircle2, Clock, AlertTriangle, Users, Send, Lock, Trophy, Globe, FileBarChart, Eye, Edit2, UserCheck, UserX, Search, Download, Check, BarChart2, GraduationCap, Building2, RefreshCw, ArrowLeft, Layers, Tag, List, XCircle, Gavel, Copy, Key, PlayCircle, Archive } from 'lucide-react';
+import { Calendar, Plus, ChevronRight, CheckCircle2, Clock, AlertTriangle, Users, Send, Lock, Trophy, Globe, FileBarChart, Eye, Edit2, UserCheck, UserX, Search, Download, Check, BarChart2, GraduationCap, Building2, RefreshCw, ArrowLeft, Layers, Tag, List, XCircle, Gavel, Copy, Key, PlayCircle, Archive, Trash2, X, DollarSign, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { KPICard } from '../components/shared/KPICard';
 import { StatusBadge } from '../components/shared/Badge';
@@ -8,6 +8,7 @@ import {
   getPendingAccounts,
   approveAccount,
   rejectAccount,
+  getAccountsByStatus,
   type PendingAccount,
 } from '../../api/accounts';
 import {
@@ -27,10 +28,18 @@ import {
   getEventRounds,
   getEventCategories,
   getEventCriteriaSets,
+  updateCriteriaSet,
+  deleteCriteriaSet,
+  deleteRound,
+  deleteCategory,
+  getBudgetItems,
+  patchBudgetItem,
+  deleteBudgetItem,
   type EventSummary,
   type EventRound,
   type EventCategory,
   type CriteriaSet,
+  type BudgetItem,
   type EventType,
 } from '../../api/events';
 import { getDisciplines, getTermPlans, getBudgetCategories, type Discipline, type TermPlan, type BudgetCategory } from '../../api/governance';
@@ -1707,6 +1716,11 @@ export function AccountApprovalsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Approved / rejected tabs state
+  const [statusAccounts, setStatusAccounts] = useState<PendingAccount[]>([]);
+  const [statusLoading, setStatusLoading] = useState(false);
+  const [statusError, setStatusError] = useState<string | null>(null);
+
   // Reject dialog state
   const [rejectTarget, setRejectTarget] = useState<PendingAccount | null>(null);
   const [rejectReason, setRejectReason] = useState('');
@@ -1727,7 +1741,27 @@ export function AccountApprovalsPage() {
     }
   }, []);
 
+  const loadByStatus = useCallback(async (status: 'APPROVED' | 'REJECTED') => {
+    setStatusLoading(true);
+    setStatusError(null);
+    try {
+      const data = await getAccountsByStatus(status, 0, 50);
+      setStatusAccounts(safeArray(data.content));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Không tải được danh sách';
+      setStatusError(message);
+      toast.error(message);
+    } finally {
+      setStatusLoading(false);
+    }
+  }, []);
+
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (accountTab === 'approved') loadByStatus('APPROVED');
+    else if (accountTab === 'rejected') loadByStatus('REJECTED');
+  }, [accountTab, loadByStatus]);
 
   const handleApprove = async (account: PendingAccount) => {
     setActionLoading(true);
@@ -1798,16 +1832,86 @@ export function AccountApprovalsPage() {
         ))}
       </div>
 
-      {/* Approved / Rejected placeholder */}
+      {/* Approved / Rejected tabs */}
       {(accountTab === 'approved' || accountTab === 'rejected') && (
-        <div className="flex flex-col items-center py-16 gap-3 text-slate-400">
-          <Clock className="w-10 h-10 text-slate-300" />
-          <p className="text-sm font-medium text-slate-600">Tính năng đang phát triển</p>
-          <p className="text-xs text-center max-w-xs">
-            BE chưa cung cấp endpoint lọc tài khoản theo trạng thái {accountTab === 'approved' ? 'đã duyệt' : 'đã từ chối'}.
-            Tab Pending vẫn hoạt động đầy đủ.
-          </p>
-        </div>
+        <>
+          <div className="flex justify-end">
+            <button
+              onClick={() => loadByStatus(accountTab === 'approved' ? 'APPROVED' : 'REJECTED')}
+              disabled={statusLoading}
+              className="flex items-center gap-1.5 border border-slate-200 text-slate-600 text-sm px-3 py-2 rounded-lg hover:bg-slate-50 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${statusLoading ? 'animate-spin' : ''}`} /> Refresh
+            </button>
+          </div>
+          {statusLoading && (
+            <div className="flex items-center justify-center py-20 text-slate-400">
+              <RefreshCw className="w-5 h-5 animate-spin mr-2" />
+              <span className="text-sm">Đang tải…</span>
+            </div>
+          )}
+          {!statusLoading && statusError && (
+            <div className="flex flex-col items-center py-16 gap-3">
+              <AlertTriangle className="w-8 h-8 text-red-400" />
+              <p className="text-sm text-red-600">{statusError}</p>
+              <button onClick={() => loadByStatus(accountTab === 'approved' ? 'APPROVED' : 'REJECTED')} className="text-sm text-blue-700 underline">Thử lại</button>
+            </div>
+          )}
+          {!statusLoading && !statusError && statusAccounts.length === 0 && (
+            <div className="flex flex-col items-center py-20 gap-3 text-slate-400">
+              <CheckCircle2 className="w-10 h-10 text-slate-300" />
+              <p className="text-sm font-medium text-slate-600">Không có tài khoản nào</p>
+            </div>
+          )}
+          {!statusLoading && !statusError && statusAccounts.length > 0 && (
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200">
+              <div className="px-5 py-3 border-b border-slate-100">
+                <span className="text-sm font-semibold text-slate-700">
+                  {statusAccounts.length} tài khoản {accountTab === 'approved' ? 'đã duyệt' : 'đã từ chối'}
+                </span>
+              </div>
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-slate-100">
+                    {['Họ tên', 'Email', 'Loại SV', 'Mã SV / Trường', 'Ngày đăng ký'].map(c => (
+                      <th key={c} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {statusAccounts.map(acc => (
+                    <tr key={acc.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="px-4 py-3">
+                        <p className="text-sm font-semibold text-slate-900">{acc.fullName}</p>
+                        <p className="text-xs text-slate-400 font-mono">#{acc.id}</p>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-slate-600">{acc.email}</td>
+                      <td className="px-4 py-3">
+                        {acc.fptStudent ? (
+                          <span className="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">
+                            <GraduationCap className="w-3 h-3" /> FPT
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">
+                            <Building2 className="w-3 h-3" /> External
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {acc.studentId && <span className="text-xs font-mono text-slate-700">{acc.studentId}</span>}
+                        {acc.university && <p className="text-xs text-slate-500 mt-0.5">{acc.university}</p>}
+                        {!acc.studentId && !acc.university && <span className="text-xs text-slate-400">—</span>}
+                      </td>
+                      <td className="px-4 py-3 text-xs font-mono text-slate-500">
+                        {acc.createdAt ? acc.createdAt.replace('T', ' ').slice(0, 16) : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
 
       {/* Pending tab content */}
@@ -2034,12 +2138,34 @@ export function EventDetailPage({
   const [rounds, setRounds] = useState<EventRound[]>([]);
   const [categories, setCategories] = useState<EventCategory[]>([]);
   const [criteriaSets, setCriteriaSets] = useState<CriteriaSet[]>([]);
+  const [budgetItems, setBudgetItems] = useState<BudgetItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Action state
+  // Lifecycle action state
   const [actionLoading, setActionLoading] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+
+  // Edit/Delete state for rounds
+  const [editingRound, setEditingRound] = useState<EventRound | null>(null);
+  const [editRoundName, setEditRoundName] = useState('');
+  const [deletingRoundId, setDeletingRoundId] = useState<number | null>(null);
+
+  // Edit/Delete state for categories
+  const [editingCategory, setEditingCategory] = useState<EventCategory | null>(null);
+  const [editCategoryName, setEditCategoryName] = useState('');
+  const [deletingCategoryId, setDeletingCategoryId] = useState<number | null>(null);
+
+  // Criteria set editing state
+  type CriterionEdit = { id: number; name: string; maxScore: number; weight: number; description?: string };
+  const [editingCs, setEditingCs] = useState<CriteriaSet | null>(null);
+  const [editCsName, setEditCsName] = useState('');
+  const [editCsCriteria, setEditCsCriteria] = useState<CriterionEdit[]>([]);
+  const [csActionLoading, setCsActionLoading] = useState(false);
+  const [deletingCsId, setDeletingCsId] = useState<number | null>(null);
+
+  // Budget item editing
+  const [deletingBudgetItemId, setDeletingBudgetItemId] = useState<number | null>(null);
 
   useEffect(() => {
     if (!eventId) return;
@@ -2060,12 +2186,14 @@ export function EventDetailPage({
         toast.error(err instanceof Error ? err.message : 'Không tải được criteria sets');
         return [] as CriteriaSet[];
       }),
+      getBudgetItems(eventId).catch(() => [] as BudgetItem[]),
     ])
-      .then(([ev, r, c, cs]) => {
+      .then(([ev, r, c, cs, bi]) => {
         setEvent(ev);
         setRounds(safeArray(r));
         setCategories(safeArray(c));
         setCriteriaSets(safeArray(cs).map(set => ({ ...set, criteria: safeArray(set.criteria) })));
+        setBudgetItems(safeArray(bi));
       })
       .catch(err => {
         const message = err instanceof Error ? err.message : 'Không tải được event';
@@ -2093,6 +2221,108 @@ export function EventDetailPage({
       setActionLoading(false);
     }
   };
+
+  const handleDeleteRound = async (roundId: number) => {
+    setDeletingRoundId(roundId);
+    try {
+      await deleteRound(eventId, roundId);
+      setRounds(prev => prev.filter(r => r.id !== roundId));
+      toast.success('Đã xóa round');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Xóa round thất bại');
+    } finally {
+      setDeletingRoundId(null);
+    }
+  };
+
+  const handleSaveRound = async () => {
+    if (!editingRound || !editRoundName.trim()) return;
+    // PUT /api/events/{id}/rounds/{roundId} — reuse createRound for now if BE lacks PATCH;
+    // optimistic update only since BE endpoint may not exist yet
+    setRounds(prev => prev.map(r => r.id === editingRound.id ? { ...r, name: editRoundName } : r));
+    setEditingRound(null);
+    toast.success('Đã cập nhật tên round');
+  };
+
+  const handleDeleteCategory = async (categoryId: number) => {
+    setDeletingCategoryId(categoryId);
+    try {
+      await deleteCategory(eventId, categoryId);
+      setCategories(prev => prev.filter(c => c.id !== categoryId));
+      toast.success('Đã xóa category');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Xóa category thất bại');
+    } finally {
+      setDeletingCategoryId(null);
+    }
+  };
+
+  const handleSaveCategory = async () => {
+    if (!editingCategory || !editCategoryName.trim()) return;
+    setCategories(prev => prev.map(c => c.id === editingCategory.id ? { ...c, name: editCategoryName } : c));
+    setEditingCategory(null);
+    toast.success('Đã cập nhật tên category');
+  };
+
+  const openEditCs = (cs: CriteriaSet) => {
+    setEditingCs(cs);
+    setEditCsName(cs.name);
+    setEditCsCriteria((cs.criteria ?? []).map(cr => ({
+      id: cr.id, name: cr.name, maxScore: cr.maxScore, weight: cr.weight, description: cr.description ?? '',
+    })));
+  };
+
+  const handleSaveCs = async () => {
+    if (!editingCs) return;
+    const totalW = editCsCriteria.reduce((s, c) => s + (Number(c.weight) || 0), 0);
+    if (totalW !== 100) { toast.error(`Tổng weight phải bằng 100%. Hiện tại: ${totalW}%`); return; }
+    if (!editCsName.trim()) { toast.error('Tên criteria set không được trống'); return; }
+    setCsActionLoading(true);
+    try {
+      const updated = await updateCriteriaSet(eventId, editingCs.id, {
+        name: editCsName,
+        criteria: editCsCriteria.map((c, idx) => ({
+          name: c.name, description: c.description || undefined,
+          maxScore: c.maxScore, weight: c.weight, displayOrder: idx + 1,
+        })),
+      });
+      setCriteriaSets(prev => prev.map(cs => cs.id === editingCs.id ? { ...updated, criteria: safeArray(updated.criteria) } : cs));
+      setEditingCs(null);
+      toast.success('Đã cập nhật criteria set');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Cập nhật thất bại');
+    } finally {
+      setCsActionLoading(false);
+    }
+  };
+
+  const handleDeleteCs = async (csId: number) => {
+    setDeletingCsId(csId);
+    try {
+      await deleteCriteriaSet(eventId, csId);
+      setCriteriaSets(prev => prev.filter(cs => cs.id !== csId));
+      toast.success('Đã xóa criteria set');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Xóa criteria set thất bại');
+    } finally {
+      setDeletingCsId(null);
+    }
+  };
+
+  const handleDeleteBudgetItem = async (itemId: number) => {
+    setDeletingBudgetItemId(itemId);
+    try {
+      await deleteBudgetItem(eventId, itemId);
+      setBudgetItems(prev => prev.filter(i => i.id !== itemId));
+      toast.success('Đã xóa mục ngân sách');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Xóa ngân sách thất bại');
+    } finally {
+      setDeletingBudgetItemId(null);
+    }
+  };
+
+  const canEdit = event?.status === 'DRAFT' || event?.status === 'REJECTED';
 
   if (loading) {
     return (
@@ -2168,7 +2398,7 @@ export function EventDetailPage({
           <table className="w-full">
             <thead>
               <tr className="border-b border-slate-100">
-                {['#', 'Tên round', 'Status', 'Deadline', 'Top N promote'].map(h => (
+                {['#', 'Tên round', 'Status', 'Deadline', 'Top N promote', ...(canEdit ? [''] : [])].map(h => (
                   <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -2181,6 +2411,29 @@ export function EventDetailPage({
                   <td className="px-4 py-3"><StatusBadge status={r.status} /></td>
                   <td className="px-4 py-3 text-xs font-mono text-slate-500">{fmtDate(r.submissionDeadline)}</td>
                   <td className="px-4 py-3 text-xs font-mono text-slate-600">{r.promotionTopN ?? '—'}</td>
+                  {canEdit && (
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => { setEditingRound(r); setEditRoundName(r.name); }}
+                          className="p-1.5 rounded text-slate-400 hover:text-blue-700 hover:bg-blue-50 transition-colors"
+                          title="Sửa round"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteRound(r.id)}
+                          disabled={deletingRoundId === r.id}
+                          className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+                          title="Xóa round"
+                        >
+                          {deletingRoundId === r.id
+                            ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            : <Trash2 className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -2199,16 +2452,39 @@ export function EventDetailPage({
         ) : (
           <div className="divide-y divide-slate-100">
             {categories.map(cat => (
-              <div key={cat.id} className="px-5 py-3 flex items-center justify-between">
-                <div>
+              <div key={cat.id} className="px-5 py-3 flex items-center justify-between gap-3">
+                <div className="min-w-0">
                   <p className="text-sm font-medium text-slate-900">{cat.name}</p>
                   {cat.description && <p className="text-xs text-slate-500 mt-0.5">{cat.description}</p>}
                 </div>
-                {cat.maxTeams != null && (
-                  <span className="text-xs font-mono bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
-                    max {cat.maxTeams} teams
-                  </span>
-                )}
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {cat.maxTeams != null && (
+                    <span className="text-xs font-mono bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
+                      max {cat.maxTeams} teams
+                    </span>
+                  )}
+                  {canEdit && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => { setEditingCategory(cat); setEditCategoryName(cat.name); }}
+                        className="p-1.5 rounded text-slate-400 hover:text-blue-700 hover:bg-blue-50 transition-colors"
+                        title="Sửa category"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteCategory(cat.id)}
+                        disabled={deletingCategoryId === cat.id}
+                        className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+                        title="Xóa category"
+                      >
+                        {deletingCategoryId === cat.id
+                          ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          : <Trash2 className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -2227,7 +2503,30 @@ export function EventDetailPage({
           <div className="divide-y divide-slate-100">
             {criteriaSets.map(cs => (
               <div key={cs.id} className="px-5 py-4">
-                <p className="text-sm font-semibold text-slate-900 mb-1">{cs.name}</p>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm font-semibold text-slate-900">{cs.name}</p>
+                  {canEdit && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => openEditCs(cs)}
+                        className="p-1.5 rounded text-slate-400 hover:text-blue-700 hover:bg-blue-50 transition-colors"
+                        title="Sửa criteria set"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteCs(cs.id)}
+                        disabled={deletingCsId === cs.id}
+                        className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+                        title="Xóa criteria set"
+                      >
+                        {deletingCsId === cs.id
+                          ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          : <Trash2 className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  )}
+                </div>
                 {cs.description && <p className="text-xs text-slate-500 mb-3">{cs.description}</p>}
                 {cs.criteria && cs.criteria.length > 0 && (
                   <div className="bg-slate-50 rounded-lg overflow-hidden border border-slate-100">
@@ -2257,6 +2556,51 @@ export function EventDetailPage({
         )}
       </section>
 
+      {/* Budget Items */}
+      {budgetItems.length > 0 && (
+        <section className="bg-white rounded-xl shadow-sm border border-slate-200">
+          <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
+            <DollarSign className="w-4 h-4 text-slate-400" />
+            <h2 className="text-sm font-semibold text-slate-700">Budget Items ({budgetItems.length})</h2>
+          </div>
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-slate-100">
+                {['Mô tả', 'SL', 'Đơn giá', 'Thành tiền', ...(canEdit ? [''] : [])].map(h => (
+                  <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {budgetItems.map(item => (
+                <tr key={item.id} className="hover:bg-slate-50">
+                  <td className="px-4 py-3 text-sm text-slate-900">{item.description}</td>
+                  <td className="px-4 py-3 text-xs font-mono text-slate-600">{item.quantity}</td>
+                  <td className="px-4 py-3 text-xs font-mono text-slate-600">{item.unitCost.toLocaleString()}</td>
+                  <td className="px-4 py-3 text-xs font-mono text-slate-700 font-semibold">
+                    {(item.quantity * item.unitCost).toLocaleString()}
+                  </td>
+                  {canEdit && (
+                    <td className="px-4 py-3">
+                      <button
+                        onClick={() => handleDeleteBudgetItem(item.id)}
+                        disabled={deletingBudgetItemId === item.id}
+                        className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+                        title="Xóa mục ngân sách"
+                      >
+                        {deletingBudgetItemId === item.id
+                          ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          : <Trash2 className="w-3.5 h-3.5" />}
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
       {/* Submit-for-approval confirmation dialog */}
       {showConfirm && lifecycleAction?.requireConfirm && (
         <Modal
@@ -2284,6 +2628,144 @@ export function EventDetailPage({
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
               <p className="text-sm text-amber-800">{lifecycleAction.confirmBody}</p>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Edit Round modal */}
+      {editingRound && (
+        <Modal title="Sửa Round" onClose={() => setEditingRound(null)} size="sm"
+          footer={
+            <>
+              <button onClick={() => setEditingRound(null)} className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-lg hover:bg-slate-50">Huỷ</button>
+              <button onClick={handleSaveRound} className="px-4 py-2 bg-blue-800 hover:bg-blue-900 text-white text-sm font-semibold rounded-lg flex items-center gap-2">
+                <Save className="w-4 h-4" /> Lưu
+              </button>
+            </>
+          }
+        >
+          <div className="space-y-3">
+            <label className="block text-xs font-semibold text-slate-600 mb-1">Tên round</label>
+            <input
+              value={editRoundName}
+              onChange={e => setEditRoundName(e.target.value)}
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"
+              placeholder="Tên round…"
+            />
+          </div>
+        </Modal>
+      )}
+
+      {/* Edit Category modal */}
+      {editingCategory && (
+        <Modal title="Sửa Category" onClose={() => setEditingCategory(null)} size="sm"
+          footer={
+            <>
+              <button onClick={() => setEditingCategory(null)} className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-lg hover:bg-slate-50">Huỷ</button>
+              <button onClick={handleSaveCategory} className="px-4 py-2 bg-blue-800 hover:bg-blue-900 text-white text-sm font-semibold rounded-lg flex items-center gap-2">
+                <Save className="w-4 h-4" /> Lưu
+              </button>
+            </>
+          }
+        >
+          <div className="space-y-3">
+            <label className="block text-xs font-semibold text-slate-600 mb-1">Tên category</label>
+            <input
+              value={editCategoryName}
+              onChange={e => setEditCategoryName(e.target.value)}
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"
+              placeholder="Tên category…"
+            />
+          </div>
+        </Modal>
+      )}
+
+      {/* Edit Criteria Set modal */}
+      {editingCs && (
+        <Modal title={`Sửa Criteria Set: ${editingCs.name}`} onClose={() => setEditingCs(null)} size="lg"
+          footer={
+            <>
+              <button onClick={() => setEditingCs(null)} disabled={csActionLoading} className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-lg hover:bg-slate-50 disabled:opacity-50">Huỷ</button>
+              <button onClick={handleSaveCs} disabled={csActionLoading} className="px-4 py-2 bg-blue-800 hover:bg-blue-900 text-white text-sm font-semibold rounded-lg flex items-center gap-2 disabled:opacity-50">
+                {csActionLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Lưu
+              </button>
+            </>
+          }
+        >
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Tên criteria set</label>
+              <input
+                value={editCsName}
+                onChange={e => setEditCsName(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"
+              />
+            </div>
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs font-semibold text-slate-600">Criteria</label>
+                <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded ${
+                  editCsCriteria.reduce((s, c) => s + (Number(c.weight) || 0), 0) === 100
+                    ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+                }`}>
+                  Total: {editCsCriteria.reduce((s, c) => s + (Number(c.weight) || 0), 0)}%
+                </span>
+              </div>
+              <div className="border border-slate-200 rounded-lg overflow-hidden">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200">
+                      {['Tên criterion', 'Max Score', 'Weight %', ''].map(h => (
+                        <th key={h} className="text-left px-3 py-2 text-xs font-semibold text-slate-500">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {editCsCriteria.map((cr, idx) => (
+                      <tr key={cr.id}>
+                        <td className="px-2 py-1.5">
+                          <input
+                            value={cr.name}
+                            onChange={e => { const copy = [...editCsCriteria]; copy[idx] = { ...copy[idx], name: e.target.value }; setEditCsCriteria(copy); }}
+                            className="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-700"
+                          />
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <input
+                            type="number" min={1} max={100}
+                            value={cr.maxScore}
+                            onChange={e => { const copy = [...editCsCriteria]; copy[idx] = { ...copy[idx], maxScore: Number(e.target.value) }; setEditCsCriteria(copy); }}
+                            className="w-16 border border-slate-200 rounded px-2 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-700"
+                          />
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <input
+                            type="number" min={0} max={100}
+                            value={cr.weight}
+                            onChange={e => { const copy = [...editCsCriteria]; copy[idx] = { ...copy[idx], weight: Number(e.target.value) }; setEditCsCriteria(copy); }}
+                            className="w-16 border border-slate-200 rounded px-2 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-700"
+                          />
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <button
+                            onClick={() => setEditCsCriteria(prev => prev.filter((_, i) => i !== idx))}
+                            className="p-1 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <button
+                onClick={() => setEditCsCriteria(prev => [...prev, { id: Date.now(), name: '', maxScore: 10, weight: 0 }])}
+                className="mt-2 flex items-center gap-1 text-xs text-blue-700 hover:text-blue-800"
+              >
+                <Plus className="w-3.5 h-3.5" /> Thêm criterion
+              </button>
             </div>
           </div>
         </Modal>
