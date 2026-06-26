@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
+import { AlertTriangle } from 'lucide-react';
 import type { Role } from './types';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -102,25 +103,50 @@ const defaultScreenByRole: Record<Role, string> = {
 
 const publicScreens = new Set(['landing', 'login', 'register', 'pending']);
 
+// Shared screens accessible by every authenticated role
+const sharedScreens = new Set(['profile', 'access-denied']);
+
+const ROLE_ALLOWED_SCREENS: Record<Role, ReadonlySet<string>> = {
+  PUBLIC: publicScreens,
+  ADMIN: new Set(['admin-dashboard', 'admin-staff', 'admin-audit', 'admin-config', 'admin-security', 'admin-roles', ...sharedScreens]),
+  SUPER_COORDINATOR: new Set(['sc-dashboard', 'sc-disciplines', 'sc-quotas', 'sc-approvals', 'sc-analytics', ...sharedScreens]),
+  EVENT_COORDINATOR: new Set([
+    'coord-dashboard', 'coord-events', 'coord-create', 'coord-participants',
+    'coord-account-approvals', 'coord-event-detail', 'coord-teams', 'coord-judges',
+    'coord-submissions', 'coord-scoring', 'coord-ranking', 'coord-awards',
+    'coord-results', 'coord-rbl', 'templates-criteria', ...sharedScreens,
+  ]),
+  INTERNAL_JUDGE: new Set(['judge-dashboard', 'judge-submissions', 'judge-scoring', ...sharedScreens]),
+  GUEST_JUDGE: new Set(['judge-dashboard', 'judge-submissions', 'judge-scoring', ...sharedScreens]),
+  MENTOR: new Set(['mentor-dashboard', 'mentor-teams', 'mentor-category', ...sharedScreens]),
+  TEAM_LEADER: new Set(['participant-dashboard', 'participant-team', 'participant-invitations', 'participant-submit', 'participant-results', 'participant-notifications', ...sharedScreens]),
+  TEAM_MEMBER: new Set(['participant-dashboard', 'participant-team', 'participant-invitations', 'participant-submit', 'participant-results', 'participant-notifications', ...sharedScreens]),
+};
+
 export default function App() {
   const auth = useAuth();
-  const [currentRole, setCurrentRole] = useState<Role>('PUBLIC');
   const [currentScreen, setCurrentScreen] = useState<string>('landing');
 
-  // Restore session from localStorage token on mount / auth state change
+  // Derive role from JWT — no manual override
+  const currentRole: Role = auth.isAuthenticated && auth.role ? auth.role : 'PUBLIC';
+
+  // On login / token restore: navigate to the role's default screen
   useEffect(() => {
-    if (auth.isAuthenticated && auth.role) {
-      setCurrentRole(auth.role);
+    if (auth.isAuthenticated && auth.role && publicScreens.has(currentScreen)) {
       setCurrentScreen(defaultScreenByRole[auth.role]);
     }
-  }, [auth.isAuthenticated, auth.role]);
+  }, [auth.isAuthenticated, auth.role]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Guard: unauthenticated access to protected screens → login
+  useEffect(() => {
+    if (!auth.isAuthenticated && !publicScreens.has(currentScreen)) {
+      setCurrentScreen('login');
+    }
+  }, [auth.isAuthenticated, currentScreen]);
 
   // Listen for 401 unauthorised events to kick user back to login
   useEffect(() => {
-    const handle = () => {
-      setCurrentRole('PUBLIC');
-      setCurrentScreen('login');
-    };
+    const handle = () => { setCurrentScreen('login'); };
     window.addEventListener('seal:unauthorized', handle);
     return () => window.removeEventListener('seal:unauthorized', handle);
   }, []);
@@ -129,20 +155,13 @@ export default function App() {
     setCurrentScreen(screen);
   }, []);
 
-  const handleRoleChange = useCallback((role: Role) => {
-    setCurrentRole(role);
-    setCurrentScreen(defaultScreenByRole[role]);
-  }, []);
-
+  // Called by LoginPage after a successful real login
   const handleRoleLogin = useCallback((role: string) => {
-    const r = role as Role;
-    setCurrentRole(r);
-    setCurrentScreen(defaultScreenByRole[r]);
+    setCurrentScreen(defaultScreenByRole[role as Role]);
   }, []);
 
   const handleLogout = useCallback(async () => {
     await auth.logout();
-    setCurrentRole('PUBLIC');
     setCurrentScreen('login');
   }, [auth]);
 
@@ -195,7 +214,6 @@ export default function App() {
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
           <Header
             currentRole={currentRole}
-            onRoleChange={handleRoleChange}
             onLogout={handleLogout}
             breadcrumbs={breadcrumbs[currentScreen] || ['SEAL']}
             onNavigate={navigate}
@@ -206,7 +224,6 @@ export default function App() {
                 screen={currentScreen}
                 role={currentRole}
                 onNavigate={navigate}
-                onRoleLogin={handleRoleLogin}
                 selectedEventId={selectedEventId}
                 onSelectEvent={handleSelectEvent}
               />
@@ -270,12 +287,16 @@ interface RendererProps {
   screen: string;
   role: Role;
   onNavigate: (s: string) => void;
-  onRoleLogin: (role: string) => void;
   selectedEventId: number | null;
   onSelectEvent: (id: number) => void;
 }
 
-function ScreenRenderer({ screen, role, onNavigate, onRoleLogin, selectedEventId, onSelectEvent }: RendererProps) {
+function ScreenRenderer({ screen, role, onNavigate, selectedEventId, onSelectEvent }: RendererProps) {
+  // Role-based access guard
+  if (!ROLE_ALLOWED_SCREENS[role]?.has(screen)) {
+    return <AccessDeniedPage onNavigate={onNavigate} />;
+  }
+
   switch (screen) {
     // Admin
     case 'admin-dashboard': return <AdminDashboard />;

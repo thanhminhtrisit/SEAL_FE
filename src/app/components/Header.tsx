@@ -2,17 +2,17 @@ import React, { useState } from 'react';
 import { Bell, ChevronDown, Settings, LogOut, UserCircle, Shield, Briefcase, Code2, Gavel, BookOpen, Users, User } from 'lucide-react';
 import type { Role } from '../types';
 
-const ROLES: { id: Role; label: string; icon: typeof Shield; color: string }[] = [
-  { id: 'PUBLIC', label: 'Public View', icon: User, color: 'text-slate-500' },
-  { id: 'ADMIN', label: 'Admin', icon: Shield, color: 'text-red-500' },
-  { id: 'SUPER_COORDINATOR', label: 'Super Coordinator', icon: Briefcase, color: 'text-purple-600' },
-  { id: 'EVENT_COORDINATOR', label: 'Event Coordinator', icon: Code2, color: 'text-blue-600' },
-  { id: 'INTERNAL_JUDGE', label: 'Internal Judge', icon: Gavel, color: 'text-amber-600' },
-  { id: 'GUEST_JUDGE', label: 'Guest Judge', icon: Gavel, color: 'text-orange-600' },
-  { id: 'MENTOR', label: 'Mentor', icon: BookOpen, color: 'text-teal-600' },
-  { id: 'TEAM_LEADER', label: 'Team Leader', icon: Users, color: 'text-cyan-600' },
-  { id: 'TEAM_MEMBER', label: 'Team Member', icon: UserCircle, color: 'text-green-600' },
-];
+const ROLE_META: Record<Role, { label: string; icon: typeof Shield; color: string }> = {
+  PUBLIC:            { label: 'Public View',       icon: User,       color: 'text-slate-500' },
+  ADMIN:             { label: 'Admin',              icon: Shield,     color: 'text-red-500' },
+  SUPER_COORDINATOR: { label: 'Super Coordinator',  icon: Briefcase,  color: 'text-purple-600' },
+  EVENT_COORDINATOR: { label: 'Event Coordinator',  icon: Code2,      color: 'text-blue-600' },
+  INTERNAL_JUDGE:    { label: 'Internal Judge',     icon: Gavel,      color: 'text-amber-600' },
+  GUEST_JUDGE:       { label: 'Guest Judge',        icon: Gavel,      color: 'text-orange-600' },
+  MENTOR:            { label: 'Mentor',             icon: BookOpen,   color: 'text-teal-600' },
+  TEAM_LEADER:       { label: 'Team Leader',        icon: Users,      color: 'text-cyan-600' },
+  TEAM_MEMBER:       { label: 'Team Member',        icon: UserCircle, color: 'text-green-600' },
+};
 
 const roleUsers: Record<Role, { name: string; email: string; avatar: string }> = {
   PUBLIC: { name: 'Guest', email: '', avatar: 'GU' },
@@ -36,18 +36,16 @@ const notifications = [
 
 interface HeaderProps {
   currentRole: Role;
-  onRoleChange: (role: Role) => void;
   onLogout?: () => void;
   breadcrumbs: string[];
   onNavigate?: (screen: string) => void;
 }
 
-export function Header({ currentRole, onRoleChange, onLogout, breadcrumbs, onNavigate }: HeaderProps) {
-  const [showRoleMenu, setShowRoleMenu] = useState(false);
+export function Header({ currentRole, onLogout, breadcrumbs, onNavigate }: HeaderProps) {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const user = roleUsers[currentRole];
-  const currentRoleInfo = ROLES.find(r => r.id === currentRole)!;
+  const roleInfo = ROLE_META[currentRole];
   const unreadCount = notifications.filter(n => n.unread).length;
 
   return (
@@ -64,31 +62,10 @@ export function Header({ currentRole, onRoleChange, onLogout, breadcrumbs, onNav
         ))}
       </nav>
 
-      {/* Role Switcher */}
-      <div className="relative">
-        <button
-          onClick={() => { setShowRoleMenu(!showRoleMenu); setShowNotifications(false); setShowProfile(false); }}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors text-sm"
-        >
-          <currentRoleInfo.icon className={`w-4 h-4 ${currentRoleInfo.color}`} />
-          <span className="font-medium text-slate-700">{currentRoleInfo.label}</span>
-          <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
-        </button>
-        {showRoleMenu && (
-          <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl shadow-lg border border-slate-200 py-1.5 z-50">
-            <p className="px-3 py-1 text-xs font-medium text-slate-400 uppercase tracking-wider">Switch Role (Demo)</p>
-            {ROLES.map(role => (
-              <button
-                key={role.id}
-                onClick={() => { onRoleChange(role.id); setShowRoleMenu(false); }}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-slate-50 transition-colors ${currentRole === role.id ? 'bg-blue-50 text-blue-700' : 'text-slate-700'}`}
-              >
-                <role.icon className={`w-4 h-4 ${role.color}`} />
-                {role.label}
-              </button>
-            ))}
-          </div>
-        )}
+      {/* Current role badge (read-only — derived from JWT) */}
+      <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-sm select-none">
+        <roleInfo.icon className={`w-4 h-4 ${roleInfo.color}`} />
+        <span className="font-medium text-slate-700">{roleInfo.label}</span>
       </div>
 
       {/* Notifications */}
@@ -151,14 +128,7 @@ export function Header({ currentRole, onRoleChange, onLogout, breadcrumbs, onNav
             </button>
             <div className="border-t border-slate-100 mt-1 pt-1">
               <button
-                onClick={() => {
-                  setShowProfile(false);
-                  if (onLogout) {
-                    onLogout();
-                  } else {
-                    onRoleChange('PUBLIC' as Role);
-                  }
-                }}
+                onClick={() => { setShowProfile(false); onLogout?.(); }}
                 className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50"
               >
                 <LogOut className="w-4 h-4" /> Sign Out

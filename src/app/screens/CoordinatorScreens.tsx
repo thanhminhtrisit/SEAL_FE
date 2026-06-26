@@ -402,7 +402,13 @@ export function CreateEventWizard({
   const selectedTermPlan = allTermPlans.find(tp => tp.id === termPlanId);
   const autoEventType = selectedTermPlan?.term as EventType | undefined;
   const totalWeight = criteria.filter(c => c.active).reduce((s, c) => s + c.weight, 0);
-  const totalBudget = budgetItems.reduce((s, i) => s + i.quantity * i.unitCost, 0);
+  // Only count rows that have both a category and a description — these are the rows actually sent to BE
+  const validBudgetItems = budgetItems.filter(i => i.categoryId !== '' && i.description.trim() !== '');
+  const skippedBudgetCount = budgetItems.length - validBudgetItems.length;
+  const totalBudget = validBudgetItems.reduce(
+    (s, i) => s + (Number(i.quantity) || 0) * (Number(i.unitCost) || 0),
+    0,
+  );
 
   useEffect(() => {
     Promise.all([getDisciplines(), getTermPlans(), getBudgetCategories()])
@@ -767,8 +773,10 @@ export function CreateEventWizard({
               <table className="w-full mb-3">
                 <thead><tr className="border-b border-slate-200">{['Category', 'Description', 'Qty', 'Unit Cost (VND)', 'Amount (VND)'].map(c => <th key={c} className="text-left px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>)}</tr></thead>
                 <tbody className="divide-y divide-slate-100">
-                  {budgetItems.map((item, i) => (
-                    <tr key={i} className="hover:bg-slate-50">
+                  {budgetItems.map((item, i) => {
+                    const isValid = item.categoryId !== '' && item.description.trim() !== '';
+                    return (
+                    <tr key={i} className={isValid ? 'hover:bg-slate-50' : 'bg-amber-50/60 hover:bg-amber-50'}>
                       <td className="px-3 py-2">
                         <select value={item.categoryId} onChange={e => { const c = [...budgetItems]; c[i] = { ...c[i], categoryId: e.target.value === '' ? '' : Number(e.target.value) }; setBudgetItems(c); }} disabled={!!budgetId}
                           className="border border-slate-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50">
@@ -788,9 +796,12 @@ export function CreateEventWizard({
                         <input type="number" min={0} value={item.unitCost} onChange={e => { const c = [...budgetItems]; c[i] = { ...c[i], unitCost: Number(e.target.value) }; setBudgetItems(c); }} disabled={!!budgetId}
                           className="w-28 border border-slate-200 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
                       </td>
-                      <td className="px-3 py-2 text-sm font-mono font-semibold text-slate-900 text-right">{(item.quantity * item.unitCost).toLocaleString()}</td>
+                      <td className={`px-3 py-2 text-sm font-mono font-semibold text-right ${isValid ? 'text-slate-900' : 'text-slate-400 line-through'}`}>
+                        {((Number(item.quantity) || 0) * (Number(item.unitCost) || 0)).toLocaleString()}
+                      </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
                 <tfoot><tr className="border-t-2 border-slate-200 bg-slate-50"><td colSpan={4} className="px-3 py-2 text-sm font-bold">Total Estimated</td><td className="px-3 py-2 text-sm font-bold text-blue-800 font-mono text-right">{totalBudget.toLocaleString()}</td></tr></tfoot>
               </table>
@@ -799,6 +810,14 @@ export function CreateEventWizard({
                   className="flex items-center gap-1.5 text-sm text-blue-700 font-medium hover:text-blue-800">
                   <Plus className="w-4 h-4" /> Add Budget Item
                 </button>
+              )}
+              {skippedBudgetCount > 0 && !budgetId && (
+                <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 mt-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                  <p className="text-sm text-amber-700">
+                    {skippedBudgetCount} dòng bị bỏ qua khi gửi (thiếu category hoặc mô tả) — tổng chỉ tính {validBudgetItems.length} dòng hợp lệ.
+                  </p>
+                </div>
               )}
               {budgetCategories.length === 0 && !loadingMeta && (
                 <p className="text-xs text-amber-600 mt-2">Không tải được danh sách budget categories — vui lòng thêm thủ công hoặc bỏ qua bước này.</p>
@@ -1394,12 +1413,17 @@ export function JudgeAssignment() {
   );
 }
 
+type TeamStatusFilter = 'all' | 'pending' | 'approved' | 'rejected';
+
+const TEAM_PENDING_STATUSES = new Set(['ACTIVE', 'PENDING', 'REGISTERED']);
+
 export function TeamManagement() {
   const [events, setEvents] = useState<EventSummary[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<number | ''>('');
   const [teams, setTeams] = useState<TeamSummary[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(true);
   const [loadingTeams, setLoadingTeams] = useState(false);
+  const [teamFilter, setTeamFilter] = useState<TeamStatusFilter>('all');
 
   // Reject dialog
   const [rejectTarget, setRejectTarget] = useState<TeamSummary | null>(null);
@@ -1463,11 +1487,16 @@ export function TeamManagement() {
 
   const selectedEvent = events.find(e => e.id === selectedEventId);
 
+  const filteredTeams = teamFilter === 'all' ? teams
+    : teamFilter === 'pending' ? teams.filter(t => TEAM_PENDING_STATUSES.has(t.status))
+    : teamFilter === 'approved' ? teams.filter(t => t.status === 'APPROVED')
+    : teams.filter(t => t.status === 'REJECTED');
+
   return (
     <div className="p-7 space-y-5">
       <PageHeader
         title="Team Registration"
-        subtitle={selectedEvent ? `${teams.length} teams — ${selectedEvent.name}` : 'Chọn event để xem danh sách team'}
+        subtitle={selectedEvent ? `${filteredTeams.length}/${teams.length} teams — ${selectedEvent.name}` : 'Chọn event để xem danh sách team'}
         actions={
           selectedEventId !== '' && (
             <button onClick={() => loadTeams(selectedEventId as number)} disabled={loadingTeams} className="flex items-center gap-1.5 border border-slate-200 text-slate-600 text-sm px-3 py-2 rounded-lg hover:bg-slate-50 disabled:opacity-50">
@@ -1489,6 +1518,30 @@ export function TeamManagement() {
           {events.map(ev => <option key={ev.id} value={ev.id}>{ev.name}</option>)}
         </select>
       </div>
+
+      {/* Status filter tabs (only show when teams loaded) */}
+      {selectedEventId !== '' && !loadingTeams && (
+        <div className="flex gap-1 border-b border-slate-200">
+          {([['all', 'All'], ['pending', 'Pending'], ['approved', 'Approved'], ['rejected', 'Rejected']] as [TeamStatusFilter, string][]).map(([f, label]) => {
+            const count = f === 'all' ? teams.length
+              : f === 'pending' ? teams.filter(t => TEAM_PENDING_STATUSES.has(t.status)).length
+              : f === 'approved' ? teams.filter(t => t.status === 'APPROVED').length
+              : teams.filter(t => t.status === 'REJECTED').length;
+            return (
+              <button
+                key={f}
+                onClick={() => setTeamFilter(f)}
+                className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px flex items-center gap-1.5 ${
+                  teamFilter === f ? 'border-blue-700 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                {label}
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${teamFilter === f ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>{count}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Loading teams */}
       {loadingTeams && (
@@ -1519,16 +1572,28 @@ export function TeamManagement() {
           <table className="w-full">
             <thead>
               <tr className="border-b border-slate-100">
-                {['Team Name', 'Category', 'Leader', 'Members', 'Status', 'Actions'].map(c => (
+                {['Team Name', 'Category', 'Leader', 'Members', 'Status', 'Điều kiện & Actions'].map(c => (
                   <th key={c} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {teams.map(t => {
+              {filteredTeams.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-10 text-center text-sm text-slate-400">Không có team nào ở trạng thái này</td></tr>
+              ) : filteredTeams.map(t => {
                 const mc = t.memberCount ?? 0;
                 const isActive = actionId === t.id;
-                const canReview = t.status === 'ACTIVE' || t.status === 'PENDING' || t.status === 'REGISTERED';
+                const canReview = TEAM_PENDING_STATUSES.has(t.status);
+
+                // Checklist conditions (TASK 4)
+                const memberValid = mc >= 3 && mc <= 5;
+                const categoryValid = !!t.categoryName;
+                const canApprove = memberValid && categoryValid;
+                const denyReasons = [
+                  !memberValid && `Sĩ số ${mc} (cần 3–5)`,
+                  !categoryValid && 'Chưa chọn category',
+                ].filter(Boolean).join(', ');
+
                 return (
                   <tr key={t.id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-4 py-3 text-sm font-semibold text-slate-900">{t.name}</td>
@@ -1541,14 +1606,30 @@ export function TeamManagement() {
                     </td>
                     <td className="px-4 py-3"><StatusBadge status={t.status} /></td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center gap-1">
-                        {canReview && (
-                          <>
+                      {canReview && (
+                        <div className="space-y-1.5">
+                          {/* Approval checklist */}
+                          <div className="flex flex-col gap-0.5">
+                            <span className={`text-[11px] flex items-center gap-1 ${memberValid ? 'text-emerald-600' : 'text-red-600'}`}>
+                              {memberValid ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                              Sĩ số 3–5 (hiện {mc})
+                            </span>
+                            <span className={`text-[11px] flex items-center gap-1 ${categoryValid ? 'text-emerald-600' : 'text-red-600'}`}>
+                              {categoryValid ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                              Đã chọn category
+                            </span>
+                          </div>
+                          {/* Action buttons */}
+                          <div className="flex items-center gap-1">
                             <button
-                              onClick={() => handleApprove(t)}
-                              disabled={isActive}
-                              title="Approve team"
-                              className="flex items-center gap-1 text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed px-2 py-1 rounded font-medium transition-colors"
+                              onClick={() => canApprove && handleApprove(t)}
+                              disabled={isActive || !canApprove}
+                              title={!canApprove ? `Không thể duyệt: ${denyReasons}` : 'Approve team'}
+                              className={`flex items-center gap-1 text-xs px-2 py-1 rounded font-medium transition-colors ${
+                                canApprove
+                                  ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50'
+                                  : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                              }`}
                             >
                               {isActive ? <span className="w-3 h-3 border-2 border-emerald-400/40 border-t-emerald-600 rounded-full animate-spin" /> : <Check className="w-3 h-3" />}
                               Approve
@@ -1560,14 +1641,14 @@ export function TeamManagement() {
                             >
                               <XCircle className="w-3 h-3" /> Reject
                             </button>
-                          </>
-                        )}
-                        {(t.status === 'APPROVED' || t.status === 'REJECTED') && (
-                          <span className="text-xs text-slate-400 italic">
-                            {t.status === 'APPROVED' ? 'Approved' : 'Rejected'}
-                          </span>
-                        )}
-                      </div>
+                          </div>
+                        </div>
+                      )}
+                      {(t.status === 'APPROVED' || t.status === 'REJECTED') && (
+                        <span className="text-xs text-slate-400 italic">
+                          {t.status === 'APPROVED' ? 'Approved' : 'Rejected'}
+                        </span>
+                      )}
                     </td>
                   </tr>
                 );
@@ -1618,7 +1699,10 @@ export function TeamManagement() {
 }
 
 // ── Account Approvals ─────────────────────────────────────────────────────────
+type AccountTab = 'pending' | 'approved' | 'rejected';
+
 export function AccountApprovalsPage() {
+  const [accountTab, setAccountTab] = useState<AccountTab>('pending');
   const [accounts, setAccounts] = useState<PendingAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1682,19 +1766,52 @@ export function AccountApprovalsPage() {
     <div className="p-7 space-y-5">
       <PageHeader
         title="Account Approvals"
-        subtitle="Duyệt tài khoản đăng ký đang chờ xét duyệt"
+        subtitle="Duyệt tài khoản đăng ký theo trạng thái"
         actions={
-          <button
-            onClick={load}
-            disabled={loading}
-            className="flex items-center gap-1.5 border border-slate-200 text-slate-600 text-sm px-3 py-2 rounded-lg hover:bg-slate-50 disabled:opacity-50"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
+          accountTab === 'pending' && (
+            <button
+              onClick={load}
+              disabled={loading}
+              className="flex items-center gap-1.5 border border-slate-200 text-slate-600 text-sm px-3 py-2 rounded-lg hover:bg-slate-50 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+          )
         }
       />
 
+      {/* Status tabs */}
+      <div className="flex gap-1 border-b border-slate-200">
+        {([['pending', 'Pending'], ['approved', 'Approved'], ['rejected', 'Rejected']] as [AccountTab, string][]).map(([tab, label]) => (
+          <button
+            key={tab}
+            onClick={() => setAccountTab(tab)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px ${
+              accountTab === tab
+                ? 'border-blue-700 text-blue-700'
+                : 'border-transparent text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Approved / Rejected placeholder */}
+      {(accountTab === 'approved' || accountTab === 'rejected') && (
+        <div className="flex flex-col items-center py-16 gap-3 text-slate-400">
+          <Clock className="w-10 h-10 text-slate-300" />
+          <p className="text-sm font-medium text-slate-600">Tính năng đang phát triển</p>
+          <p className="text-xs text-center max-w-xs">
+            BE chưa cung cấp endpoint lọc tài khoản theo trạng thái {accountTab === 'approved' ? 'đã duyệt' : 'đã từ chối'}.
+            Tab Pending vẫn hoạt động đầy đủ.
+          </p>
+        </div>
+      )}
+
+      {/* Pending tab content */}
+      {accountTab === 'pending' && <>
       {/* Loading */}
       {loading && (
         <div className="flex items-center justify-center py-20 text-slate-400">
@@ -1796,6 +1913,8 @@ export function AccountApprovalsPage() {
           </table>
         </div>
       )}
+
+      </>}
 
       {/* Reject Dialog */}
       {rejectTarget && (
