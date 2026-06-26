@@ -248,7 +248,7 @@ function ScreenRenderer({ screen, role, onNavigate, onRoleLogin }: RendererProps
     case 'coord-ranking': 
       return (
         <RankingScreen 
-          roundId={1} // Tạm fix cứng vòng 1 để test khớp với Database
+          eventId={1} // Tạm fix cứng Event ID = 1 để test khớp với Database
           isCoordinator={role === 'EVENT_COORDINATOR' || role === 'SUPER_COORDINATOR' || role === 'ADMIN'} 
         />
       );

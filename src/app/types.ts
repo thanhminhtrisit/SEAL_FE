@@ -13,6 +13,7 @@ export interface RankingResponse {
   rankingId: number | null;
   teamId: number;
   teamName: string;
+  categoryName?: string;
   roundId: number;
   totalScore: number;
   rankPosition: number;
