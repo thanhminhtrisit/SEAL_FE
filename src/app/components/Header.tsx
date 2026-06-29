@@ -1,29 +1,19 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Bell, ChevronDown, Settings, LogOut, UserCircle, Shield, Briefcase, Code2, Gavel, BookOpen, Users, User } from 'lucide-react';
 import type { Role } from '../types';
+import { useAuth } from '../../auth/AuthContext';
+import { getMe, type MeResponse } from '../../api/auth';
 
-const ROLES: { id: Role; label: string; icon: typeof Shield; color: string }[] = [
-  { id: 'PUBLIC', label: 'Public View', icon: User, color: 'text-slate-500' },
-  { id: 'ADMIN', label: 'Admin', icon: Shield, color: 'text-red-500' },
-  { id: 'SUPER_COORDINATOR', label: 'Super Coordinator', icon: Briefcase, color: 'text-purple-600' },
-  { id: 'EVENT_COORDINATOR', label: 'Event Coordinator', icon: Code2, color: 'text-blue-600' },
-  { id: 'INTERNAL_JUDGE', label: 'Internal Judge', icon: Gavel, color: 'text-amber-600' },
-  { id: 'GUEST_JUDGE', label: 'Guest Judge', icon: Gavel, color: 'text-orange-600' },
-  { id: 'MENTOR', label: 'Mentor', icon: BookOpen, color: 'text-teal-600' },
-  { id: 'TEAM_LEADER', label: 'Team Leader', icon: Users, color: 'text-cyan-600' },
-  { id: 'TEAM_MEMBER', label: 'Team Member', icon: UserCircle, color: 'text-green-600' },
-];
-
-const roleUsers: Record<Role, { name: string; email: string; avatar: string }> = {
-  PUBLIC: { name: 'Guest', email: '', avatar: 'GU' },
-  ADMIN: { name: 'Nguyen Van An', email: 'an.nv@fpt.edu.vn', avatar: 'NA' },
-  SUPER_COORDINATOR: { name: 'Tran Thi Bich', email: 'bich.tt@fpt.edu.vn', avatar: 'TB' },
-  EVENT_COORDINATOR: { name: 'Le Minh Cuong', email: 'cuong.lm@fpt.edu.vn', avatar: 'LC' },
-  INTERNAL_JUDGE: { name: 'Pham Duc Dat', email: 'dat.pd@fpt.edu.vn', avatar: 'PD' },
-  GUEST_JUDGE: { name: 'Dr. Sarah Chen', email: 'schen@industry.com', avatar: 'SC' },
-  MENTOR: { name: 'Hoang Thi Em', email: 'em.ht@fpt.edu.vn', avatar: 'HE' },
-  TEAM_LEADER: { name: 'Nguyen Thanh Phong', email: 'phong.nt@student.fpt.edu.vn', avatar: 'NP' },
-  TEAM_MEMBER: { name: 'Do Thi Quynh', email: 'quynh.dt@student.fpt.edu.vn', avatar: 'DQ' },
+const ROLE_META: Record<Role, { label: string; icon: typeof Shield; color: string }> = {
+  PUBLIC:            { label: 'Public View',       icon: User,       color: 'text-slate-500' },
+  ADMIN:             { label: 'Admin',              icon: Shield,     color: 'text-red-500' },
+  SUPER_COORDINATOR: { label: 'Super Coordinator',  icon: Briefcase,  color: 'text-purple-600' },
+  EVENT_COORDINATOR: { label: 'Event Coordinator',  icon: Code2,      color: 'text-blue-600' },
+  INTERNAL_JUDGE:    { label: 'Internal Judge',     icon: Gavel,      color: 'text-amber-600' },
+  GUEST_JUDGE:       { label: 'Guest Judge',        icon: Gavel,      color: 'text-orange-600' },
+  MENTOR:            { label: 'Mentor',             icon: BookOpen,   color: 'text-teal-600' },
+  TEAM_LEADER:       { label: 'Team Leader',        icon: Users,      color: 'text-cyan-600' },
+  TEAM_MEMBER:       { label: 'Team Member',        icon: UserCircle, color: 'text-green-600' },
 };
 
 const notifications = [
@@ -34,21 +24,40 @@ const notifications = [
   { id: 5, text: 'RBL analysis complete for Preliminary Round', time: '1d ago', unread: false },
 ];
 
+function avatarInitials(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
 interface HeaderProps {
   currentRole: Role;
-  onRoleChange: (role: Role) => void;
   onLogout?: () => void;
   breadcrumbs: string[];
   onNavigate?: (screen: string) => void;
 }
 
-export function Header({ currentRole, onRoleChange, onLogout, breadcrumbs, onNavigate }: HeaderProps) {
-  const [showRoleMenu, setShowRoleMenu] = useState(false);
+export function Header({ currentRole, onLogout, breadcrumbs, onNavigate }: HeaderProps) {
+  const auth = useAuth();
+  const [me, setMe] = useState<MeResponse | null>(null);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
-  const user = roleUsers[currentRole];
-  const currentRoleInfo = ROLES.find(r => r.id === currentRole)!;
+
+  // Fetch real user info whenever the user logs in; clear on logout
+  useEffect(() => {
+    if (!auth.isAuthenticated) { setMe(null); return; }
+    getMe().then(setMe).catch(() => { /* silently ignore — JWT data still shown */ });
+  }, [auth.isAuthenticated]);
+
+  const roleInfo = ROLE_META[currentRole];
   const unreadCount = notifications.filter(n => n.unread).length;
+
+  const displayName = me?.fullName ?? '…';
+  const displayEmail = me?.email ?? '';
+  const displayRole = me?.roleCode ?? roleInfo.label;
+  const displayAvatar = me ? avatarInitials(me.fullName) : roleInfo.label.slice(0, 2).toUpperCase();
+
+  const closeAll = () => { setShowNotifications(false); setShowProfile(false); };
 
   return (
     <header className="h-16 bg-white border-b border-slate-200 flex items-center px-6 gap-4 sticky top-0 z-30">
@@ -64,37 +73,16 @@ export function Header({ currentRole, onRoleChange, onLogout, breadcrumbs, onNav
         ))}
       </nav>
 
-      {/* Role Switcher */}
-      <div className="relative">
-        <button
-          onClick={() => { setShowRoleMenu(!showRoleMenu); setShowNotifications(false); setShowProfile(false); }}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors text-sm"
-        >
-          <currentRoleInfo.icon className={`w-4 h-4 ${currentRoleInfo.color}`} />
-          <span className="font-medium text-slate-700">{currentRoleInfo.label}</span>
-          <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
-        </button>
-        {showRoleMenu && (
-          <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl shadow-lg border border-slate-200 py-1.5 z-50">
-            <p className="px-3 py-1 text-xs font-medium text-slate-400 uppercase tracking-wider">Switch Role (Demo)</p>
-            {ROLES.map(role => (
-              <button
-                key={role.id}
-                onClick={() => { onRoleChange(role.id); setShowRoleMenu(false); }}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-slate-50 transition-colors ${currentRole === role.id ? 'bg-blue-50 text-blue-700' : 'text-slate-700'}`}
-              >
-                <role.icon className={`w-4 h-4 ${role.color}`} />
-                {role.label}
-              </button>
-            ))}
-          </div>
-        )}
+      {/* Role badge — shows real roleCode from /me once loaded */}
+      <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-sm select-none">
+        <roleInfo.icon className={`w-4 h-4 ${roleInfo.color}`} />
+        <span className="font-medium text-slate-700">{displayRole}</span>
       </div>
 
       {/* Notifications */}
       <div className="relative">
         <button
-          onClick={() => { setShowNotifications(!showNotifications); setShowRoleMenu(false); setShowProfile(false); }}
+          onClick={() => { setShowNotifications(v => !v); setShowProfile(false); }}
           className="relative p-2 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-700 transition-colors"
         >
           <Bell className="w-5 h-5" />
@@ -125,40 +113,34 @@ export function Header({ currentRole, onRoleChange, onLogout, breadcrumbs, onNav
       {/* Profile */}
       <div className="relative">
         <button
-          onClick={() => { setShowProfile(!showProfile); setShowRoleMenu(false); setShowNotifications(false); }}
+          onClick={() => { setShowProfile(v => !v); setShowNotifications(false); }}
           className="flex items-center gap-2.5 hover:bg-slate-50 rounded-lg px-2 py-1.5 transition-colors"
         >
           <div className="w-8 h-8 rounded-full bg-blue-700 text-white text-xs font-bold flex items-center justify-center" style={{ fontFamily: 'var(--font-display)' }}>
-            {user.avatar}
+            {displayAvatar}
           </div>
           <div className="text-left hidden sm:block">
-            <p className="text-sm font-medium text-slate-900 leading-tight">{user.name}</p>
-            <p className="text-xs text-slate-400 leading-tight">{user.email}</p>
+            <p className="text-sm font-medium text-slate-900 leading-tight">{displayName}</p>
+            <p className="text-xs text-slate-400 leading-tight truncate max-w-[160px]">{displayEmail}</p>
           </div>
           <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
         </button>
         {showProfile && (
-          <div className="absolute right-0 top-full mt-2 w-52 bg-white rounded-xl shadow-lg border border-slate-200 py-1.5 z-50">
+          <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl shadow-lg border border-slate-200 py-1.5 z-50">
             <div className="px-3 py-2 border-b border-slate-100 mb-1">
-              <p className="text-sm font-semibold text-slate-900">{user.name}</p>
-              <p className="text-xs text-slate-400">{user.email}</p>
+              <p className="text-sm font-semibold text-slate-900 truncate">{displayName}</p>
+              <p className="text-xs text-slate-400 truncate">{displayEmail}</p>
+              <p className="text-xs font-mono text-slate-500 mt-0.5">{displayRole}</p>
             </div>
-            <button onClick={() => { onNavigate?.('profile'); setShowProfile(false); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
+            <button onClick={() => { onNavigate?.('profile'); closeAll(); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
               <UserCircle className="w-4 h-4 text-slate-400" /> My Profile
             </button>
-            <button onClick={() => { onNavigate?.('admin-config'); setShowProfile(false); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
+            <button onClick={() => { onNavigate?.('admin-config'); closeAll(); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
               <Settings className="w-4 h-4 text-slate-400" /> Settings
             </button>
             <div className="border-t border-slate-100 mt-1 pt-1">
               <button
-                onClick={() => {
-                  setShowProfile(false);
-                  if (onLogout) {
-                    onLogout();
-                  } else {
-                    onRoleChange('PUBLIC' as Role);
-                  }
-                }}
+                onClick={() => { closeAll(); onLogout?.(); }}
                 className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50"
               >
                 <LogOut className="w-4 h-4" /> Sign Out

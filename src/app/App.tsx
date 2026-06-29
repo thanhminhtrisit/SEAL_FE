@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
+import { AlertTriangle } from 'lucide-react';
 import type { Role } from './types';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -17,6 +18,7 @@ import { SCDashboard, EventApprovals, SCAnalytics, Disciplines, TermQuotas } fro
 import {
   CoordDashboard, EventList, CreateEventWizard, ParticipantApproval,
   SubmissionMonitor, JudgeAssignment, TeamManagement, AccountApprovalsPage,
+  EventDetailPage,
 } from './screens/CoordinatorScreens';
 import {
   ScoringControl, RankingPage, ResultPublication, RBLDashboard,
@@ -30,7 +32,7 @@ import { MentorDashboard, MentorTeams } from './screens/MentorScreens';
 
 // Participant screens
 import {
-  ParticipantDashboard, TeamDetail, SubmitProject, ViewResults, NotificationsPage,
+  ParticipantDashboard, TeamDetail, SubmitProject, ViewResults, NotificationsPage, MyInvitationsPage,
 } from './screens/ParticipantScreens';
 
 // Template screens
@@ -67,6 +69,7 @@ const breadcrumbs: Record<string, string[]> = {
   'coord-create': ['SEAL', 'Coordinator', 'Create Event'],
   'coord-participants': ['SEAL', 'Coordinator', 'Participant Approval'],
   'coord-account-approvals': ['SEAL', 'Coordinator', 'Account Approvals'],
+  'coord-event-detail': ['SEAL', 'Coordinator', 'Event Detail'],
   'coord-teams': ['SEAL', 'Coordinator', 'Teams'],
   'coord-judges': ['SEAL', 'Coordinator', 'Judge Assignment'],
   'coord-submissions': ['SEAL', 'Coordinator', 'Submissions'],
@@ -83,6 +86,7 @@ const breadcrumbs: Record<string, string[]> = {
   'mentor-category': ['SEAL', 'Mentor', 'Category View'],
   'participant-dashboard': ['SEAL', 'Participant', 'Dashboard'],
   'participant-team': ['SEAL', 'Participant', 'My Team'],
+  'participant-invitations': ['SEAL', 'Participant', 'My Invitations'],
   'participant-submit': ['SEAL', 'Participant', 'Submit Project'],
   'participant-results': ['SEAL', 'Participant', 'Results'],
   'participant-notifications': ['SEAL', 'Participant', 'Notifications'],
@@ -105,25 +109,50 @@ const defaultScreenByRole: Record<Role, string> = {
 
 const publicScreens = new Set(['landing', 'login', 'register', 'pending']);
 
+// Shared screens accessible by every authenticated role
+const sharedScreens = new Set(['profile', 'access-denied']);
+
+const ROLE_ALLOWED_SCREENS: Record<Role, ReadonlySet<string>> = {
+  PUBLIC: publicScreens,
+  ADMIN: new Set(['admin-dashboard', 'admin-staff', 'admin-audit', 'admin-config', 'admin-security', 'admin-roles', ...sharedScreens]),
+  SUPER_COORDINATOR: new Set(['sc-dashboard', 'sc-disciplines', 'sc-quotas', 'sc-approvals', 'sc-analytics', ...sharedScreens]),
+  EVENT_COORDINATOR: new Set([
+    'coord-dashboard', 'coord-events', 'coord-create', 'coord-participants',
+    'coord-account-approvals', 'coord-event-detail', 'coord-teams', 'coord-judges',
+    'coord-submissions', 'coord-scoring', 'coord-ranking', 'coord-awards',
+    'coord-results', 'coord-rbl', 'templates-criteria', ...sharedScreens,
+  ]),
+  INTERNAL_JUDGE: new Set(['judge-dashboard', 'judge-submissions', 'judge-scoring', ...sharedScreens]),
+  GUEST_JUDGE: new Set(['judge-dashboard', 'judge-submissions', 'judge-scoring', ...sharedScreens]),
+  MENTOR: new Set(['mentor-dashboard', 'mentor-teams', 'mentor-category', ...sharedScreens]),
+  TEAM_LEADER: new Set(['participant-dashboard', 'participant-team', 'participant-invitations', 'participant-submit', 'participant-results', 'participant-notifications', ...sharedScreens]),
+  TEAM_MEMBER: new Set(['participant-dashboard', 'participant-team', 'participant-invitations', 'participant-submit', 'participant-results', 'participant-notifications', ...sharedScreens]),
+};
+
 export default function App() {
   const auth = useAuth();
-  const [currentRole, setCurrentRole] = useState<Role>('PUBLIC');
   const [currentScreen, setCurrentScreen] = useState<string>('landing');
 
-  // Restore session from localStorage token on mount / auth state change
+  // Derive role from JWT — no manual override
+  const currentRole: Role = auth.isAuthenticated && auth.role ? auth.role : 'PUBLIC';
+
+  // On login / token restore: navigate to the role's default screen
   useEffect(() => {
-    if (auth.isAuthenticated && auth.role) {
-      setCurrentRole(auth.role);
+    if (auth.isAuthenticated && auth.role && publicScreens.has(currentScreen)) {
       setCurrentScreen(defaultScreenByRole[auth.role]);
     }
-  }, [auth.isAuthenticated, auth.role]);
+  }, [auth.isAuthenticated, auth.role]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Guard: unauthenticated access to protected screens → login
+  useEffect(() => {
+    if (!auth.isAuthenticated && !publicScreens.has(currentScreen)) {
+      setCurrentScreen('login');
+    }
+  }, [auth.isAuthenticated, currentScreen]);
 
   // Listen for 401 unauthorised events to kick user back to login
   useEffect(() => {
-    const handle = () => {
-      setCurrentRole('PUBLIC');
-      setCurrentScreen('login');
-    };
+    const handle = () => { setCurrentScreen('login'); };
     window.addEventListener('seal:unauthorized', handle);
     return () => window.removeEventListener('seal:unauthorized', handle);
   }, []);
@@ -132,22 +161,22 @@ export default function App() {
     setCurrentScreen(screen);
   }, []);
 
-  const handleRoleChange = useCallback((role: Role) => {
-    setCurrentRole(role);
-    setCurrentScreen(defaultScreenByRole[role]);
-  }, []);
-
+  // Called by LoginPage after a successful real login
   const handleRoleLogin = useCallback((role: string) => {
-    const r = role as Role;
-    setCurrentRole(r);
-    setCurrentScreen(defaultScreenByRole[r]);
+    setCurrentScreen(defaultScreenByRole[role as Role]);
   }, []);
 
   const handleLogout = useCallback(async () => {
     await auth.logout();
-    setCurrentRole('PUBLIC');
     setCurrentScreen('login');
   }, [auth]);
+
+  const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
+
+  const handleSelectEvent = useCallback((id: number) => {
+    setSelectedEventId(id);
+    setCurrentScreen('coord-event-detail');
+  }, []);
 
   // Public screens bypass the shell layout
   if (publicScreens.has(currentScreen)) {
@@ -191,18 +220,20 @@ export default function App() {
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
           <Header
             currentRole={currentRole}
-            onRoleChange={handleRoleChange}
             onLogout={handleLogout}
             breadcrumbs={breadcrumbs[currentScreen] || ['SEAL']}
             onNavigate={navigate}
           />
           <main className="flex-1 overflow-y-auto">
-            <ScreenRenderer
-              screen={currentScreen}
-              role={currentRole}
-              onNavigate={navigate}
-              onRoleLogin={handleRoleLogin}
-            />
+            <ScreenErrorBoundary screen={currentScreen}>
+              <ScreenRenderer
+                screen={currentScreen}
+                role={currentRole}
+                onNavigate={navigate}
+                selectedEventId={selectedEventId}
+                onSelectEvent={handleSelectEvent}
+              />
+            </ScreenErrorBoundary>
           </main>
         </div>
       </div>
@@ -211,14 +242,67 @@ export default function App() {
 }
 
 // ── Screen Renderer ──────────────────────────────────────────────────────────
+interface ScreenErrorBoundaryProps {
+  screen: string;
+  children: React.ReactNode;
+}
+
+interface ScreenErrorBoundaryState {
+  error: Error | null;
+}
+
+class ScreenErrorBoundary extends React.Component<ScreenErrorBoundaryProps, ScreenErrorBoundaryState> {
+  state: ScreenErrorBoundaryState = { error: null };
+
+  static getDerivedStateFromError(error: Error): ScreenErrorBoundaryState {
+    return { error };
+  }
+
+  componentDidUpdate(prevProps: ScreenErrorBoundaryProps) {
+    if (prevProps.screen !== this.props.screen && this.state.error) {
+      this.setState({ error: null });
+    }
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+
+    return (
+      <div className="flex min-h-full items-center justify-center p-8">
+        <div className="max-w-md rounded-xl border border-red-200 bg-white p-6 text-center shadow-sm">
+          <AlertTriangle className="mx-auto mb-3 h-9 w-9 text-red-500" />
+          <h2 className="mb-1 text-lg font-bold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>
+            Có lỗi, thử lại
+          </h2>
+          <p className="mb-4 text-sm text-slate-500">
+            Màn hình này gặp lỗi khi tải. Thử lại hoặc chuyển sang màn khác.
+          </p>
+          <button
+            onClick={() => this.setState({ error: null })}
+            className="rounded-lg bg-blue-800 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-900"
+          >
+            Thử lại
+          </button>
+        </div>
+      </div>
+    );
+  }
+}
+
 interface RendererProps {
   screen: string;
   role: Role;
   onNavigate: (s: string) => void;
-  onRoleLogin: (role: string) => void;
+  selectedEventId: number | null;
+  onSelectEvent: (id: number) => void;
 }
 
-function ScreenRenderer({ screen, role, onNavigate, onRoleLogin }: RendererProps) {
+function ScreenRenderer({ screen, role, onNavigate, selectedEventId, onSelectEvent }: RendererProps) {
+  // Role-based access guard
+  if (!ROLE_ALLOWED_SCREENS[role]?.has(screen)) {
+    return <AccessDeniedPage onNavigate={onNavigate} />;
+  }
+
   switch (screen) {
     // Admin
     case 'admin-dashboard': return <AdminDashboard />;
@@ -237,10 +321,13 @@ function ScreenRenderer({ screen, role, onNavigate, onRoleLogin }: RendererProps
 
     // Event Coordinator
     case 'coord-dashboard': return <CoordDashboard onNavigate={onNavigate} />;
-    case 'coord-events': return <EventList onNavigate={onNavigate} />;
-    case 'coord-create': return <CreateEventWizard onNavigate={onNavigate} />;
+    case 'coord-events': return <EventList onNavigate={onNavigate} onSelectEvent={onSelectEvent} />;
+    case 'coord-create': return <CreateEventWizard onNavigate={onNavigate} onSelectEvent={onSelectEvent} />;
     case 'coord-participants': return <ParticipantApproval />;
     case 'coord-account-approvals': return <AccountApprovalsPage />;
+    case 'coord-event-detail': return selectedEventId
+      ? <EventDetailPage eventId={selectedEventId} onNavigate={onNavigate} />
+      : <EventList onNavigate={onNavigate} onSelectEvent={onSelectEvent} />;
     case 'coord-teams': return <TeamManagement />;
     case 'coord-judges': return <JudgeAssignment />;
     case 'coord-submissions': return <SubmissionMonitor />;
@@ -269,6 +356,7 @@ function ScreenRenderer({ screen, role, onNavigate, onRoleLogin }: RendererProps
     // Participant
     case 'participant-dashboard': return <ParticipantDashboard onNavigate={onNavigate} />;
     case 'participant-team': return <TeamDetail onNavigate={onNavigate} />;
+    case 'participant-invitations': return <MyInvitationsPage />;
     case 'participant-submit': return <SubmitProject />;
     case 'participant-results': return <ViewResults />;
     case 'participant-notifications': return <NotificationsPage />;

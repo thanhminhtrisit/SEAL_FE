@@ -61,3 +61,17 @@ export async function rejectAccount(
   if (!data) throw new Error(res.data.message ?? 'Reject failed');
   return data;
 }
+
+export async function getAccountsByStatus(
+  status: 'APPROVED' | 'REJECTED' | 'PENDING',
+  page = 0,
+  size = 50,
+): Promise<PagedData> {
+  const res = await apiClient.get<ApiResponse<PagedData>>(
+    '/api/auth/accounts',
+    { params: { status, page, size } },
+  );
+  const data = res.data.data;
+  if (!data) throw new Error(res.data.message ?? 'Failed to fetch accounts');
+  return data;
+}

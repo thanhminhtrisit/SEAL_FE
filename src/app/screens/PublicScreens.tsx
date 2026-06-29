@@ -270,27 +270,6 @@ export function LoginPage({ onNavigate, onRoleLogin }: { onNavigate: (s: string)
             </button>
           </form>
 
-          <div className="mt-6 border-t border-slate-200 pt-5">
-            <p className="text-xs text-slate-500 mb-3 text-center font-medium">Demo: Sign in as role (bypass BE)</p>
-            <div className="grid grid-cols-2 gap-2">
-              {[
-                { role: 'ADMIN', label: 'Admin' },
-                { role: 'SUPER_COORDINATOR', label: 'Super Coordinator' },
-                { role: 'EVENT_COORDINATOR', label: 'Event Coordinator' },
-                { role: 'INTERNAL_JUDGE', label: 'Internal Judge' },
-                { role: 'MENTOR', label: 'Mentor' },
-                { role: 'TEAM_LEADER', label: 'Team Leader' },
-              ].map(({ role, label }) => (
-                <button
-                  key={role}
-                  onClick={() => onRoleLogin(role)}
-                  className="text-xs border border-slate-200 rounded-lg py-2 px-3 text-slate-600 hover:bg-slate-50 hover:border-blue-300 hover:text-blue-700 transition-colors font-medium"
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
           <p className="mt-5 text-center text-sm text-slate-500">
             New participant? <button onClick={() => onNavigate('register')} className="text-blue-700 font-medium hover:text-blue-800">Create account</button>
           </p>
