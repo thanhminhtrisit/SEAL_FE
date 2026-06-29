@@ -12,5 +12,12 @@ export const award = {
   createAward: async (request: AwardCreateRequest): Promise<AwardResponse> => {
     const response = await apiClient.post<ApiResponse<AwardResponse>>(`api/awards`, request);
     return response.data.data;
-  }
+  },
+
+  getEligibleTeams: async (eventId: number) => {
+    const response = await apiClient.get(`/api/awards/events/${eventId}/eligible-teams`);
+    return response.data.data;
+  },
+
+  
 };

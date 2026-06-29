@@ -5,6 +5,7 @@ import { AwardResponse } from '../../app/types';
 export const AwardsPage: React.FC = () => {
   const eventId = 1; // Giả định đang ở Event ID 1 để test khớp dữ liệu MySQL
   const [awards, setAwards] = useState<AwardResponse[]>([]);
+  const [eligibleTeams, setEligibleTeams] = useState<any[]>([]); // Thêm state lưu đội đủ điều kiện
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -13,10 +14,11 @@ export const AwardsPage: React.FC = () => {
   const [awardType, setAwardType] = useState<string>('FIRST_PLACE');
   const [description, setDescription] = useState<string>('');
 
-  // Tải danh sách giải thưởng khi mở màn hình
+  // Tải danh sách giải thưởng và đội đủ điều kiện khi mở màn hình
   useEffect(() => {
     loadAwards();
-  }, []);
+    loadEligibleTeams();
+  }, [eventId]);
 
   const loadAwards = async () => {
     try {
@@ -27,10 +29,19 @@ export const AwardsPage: React.FC = () => {
     }
   };
 
+  const loadEligibleTeams = async () => {
+    try {
+      const data = await award.getEligibleTeams(eventId);
+      setEligibleTeams(data || []);
+    } catch (err) {
+      console.error('Lỗi tải danh sách đội đủ điều kiện:', err);
+    }
+  };
+
   const handleSubmitAward = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!teamId) {
-      alert('Vui lòng nhập ID của đội thi!');
+      alert('Vui lòng chọn đội thi nhận giải!');
       return;
     }
 
@@ -52,7 +63,7 @@ export const AwardsPage: React.FC = () => {
       setDescription('');
       loadAwards();
     } catch (err: any) {
-      setError('Không thể trao giải. Vui lòng kiểm tra lại ID đội thi hoặc kết nối mạng.');
+      setError('Không thể trao giải. Vui lòng kiểm tra lại kết nối mạng.');
     } finally {
       setIsLoading(false);
     }
@@ -83,15 +94,27 @@ export const AwardsPage: React.FC = () => {
           {error && <div className="p-3 mb-4 text-sm text-red-700 bg-red-50 rounded-lg border border-red-200">{error}</div>}
 
           <form onSubmit={handleSubmitAward} className="space-y-4">
+            {/* ĐÃ THAY THẾ INPUT BẰNG SELECT */}
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Mã Đội Thi (Team ID) *</label>
-              <input 
-                type="number" 
+              <label className="block text-sm font-medium text-slate-700 mb-1">Đội Thi Đạt Giải *</label>
+              <select 
                 value={teamId}
                 onChange={(e) => setTeamId(e.target.value)}
-                placeholder="Ví dụ: 2 (Cyber Ninjas)"
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-              />
+                required
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm bg-white"
+              >
+                <option value="" disabled>-- Chọn đội thi từ Vòng Chung Kết --</option>
+                {eligibleTeams.map((team) => (
+                  <option key={team.teamId} value={team.teamId}>
+                    Hạng {team.rankPosition}: {team.teamName} ({Number(team.totalScore).toFixed(3)} điểm)
+                  </option>
+                ))}
+              </select>
+              {eligibleTeams.length === 0 && (
+                <p className="text-xs text-amber-600 mt-1 italic">
+                  *Chưa có dữ liệu xếp hạng chung kết. Hãy tính toán xếp hạng trước!
+                </p>
+              )}
             </div>
 
             <div>
@@ -123,9 +146,9 @@ export const AwardsPage: React.FC = () => {
 
             <button 
               type="submit"
-              disabled={isLoading}
+              disabled={isLoading || eligibleTeams.length === 0}
               className={`w-full py-2 px-4 rounded-lg text-white font-semibold text-sm transition-colors
-                ${isLoading ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-800 hover:bg-blue-900'}`}
+                ${isLoading || eligibleTeams.length === 0 ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-800 hover:bg-blue-900'}`}
             >
               {isLoading ? 'Đang hệ thống hóa...' : 'Xác Nhận Trao Giải'}
             </button>
@@ -163,7 +186,7 @@ export const AwardsPage: React.FC = () => {
                           {item.awardType.replace(/_/g, ' ')}
                         </span>
                       </td>
-                      <td className="px-4 py-4 text-sm text-slate-600 max-w-xs truncate">
+                      <td className="px-4 py-4 text-sm text-slate-600 max-w-xs truncate" title={item.description}>
                         {item.description || 'Không có mô tả đi kèm.'}
                       </td>
                     </tr>
