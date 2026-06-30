@@ -1,19 +1,7 @@
 import { apiClient } from './client';
 import type { ApiResponse } from './types';
 
-export interface SubmissionVersion {
-  versionId: number;
-  versionNumber: number;
-  repoUrl: string;
-  demoUrl?: string | null;
-  slideUrl?: string | null;
-  reportUrl?: string | null;
-  changeNote?: string | null;
-  submittedBy: number;
-  submittedAt: string;
-}
-
-export interface SubmissionDetail {
+export interface SubmissionAttempt {
   submissionId: number;
   teamId: number;
   teamName?: string | null;
@@ -23,32 +11,39 @@ export interface SubmissionDetail {
   eventName?: string | null;
   categoryId?: number | null;
   categoryName?: string | null;
-  currentVersionId?: number | null;
-  currentVersion?: SubmissionVersion | null;
-  status: string;
-  submittedAt?: string | null;
-  lastUpdatedAt?: string | null;
-}
-
-export interface SubmissionMyOverviewVersion {
-  versionId: number;
-  versionNumber: number;
-  repoUrl: string;
+  attemptNumber: number;
+  repoUrl?: string | null;
   demoUrl?: string | null;
   slideUrl?: string | null;
   reportUrl?: string | null;
   changeNote?: string | null;
-  submittedBy: number;
-  submittedAt: string;
-}
-
-export interface SubmissionMyOverviewSubmission {
-  submissionId: number;
+  submittedBy?: number | null;
   status: string;
   submittedAt?: string | null;
   lastUpdatedAt?: string | null;
-  currentVersionId?: number | null;
-  currentVersion?: SubmissionMyOverviewVersion | null;
+}
+
+export type SubmissionDetail = SubmissionAttempt;
+
+export interface SubmissionMyOverviewSubmission {
+  submissionId: number;
+  attemptNumber: number;
+  repoUrl?: string | null;
+  demoUrl?: string | null;
+  slideUrl?: string | null;
+  reportUrl?: string | null;
+  changeNote?: string | null;
+  submittedBy?: number | null;
+  status: string;
+  submittedAt?: string | null;
+  lastUpdatedAt?: string | null;
+}
+
+export interface SubmissionRequirements {
+  requiresRepo: boolean;
+  requiresDemo: boolean;
+  requiresSlide: boolean;
+  requiresReport: boolean;
 }
 
 export interface SubmissionMyOverviewRound {
@@ -57,6 +52,7 @@ export interface SubmissionMyOverviewRound {
   orderNumber: number;
   status: string;
   submissionDeadline?: string | null;
+  submissionRequirements: SubmissionRequirements;
   submission?: SubmissionMyOverviewSubmission | null;
 }
 
@@ -75,7 +71,7 @@ export interface SubmissionMyOverview {
   teams: SubmissionMyOverviewTeam[];
 }
 
-export interface CreateDraftSubmissionRequest {
+export interface CreateSubmissionRequest {
   teamId: number;
   roundId: number;
   repoUrl?: string;
@@ -83,20 +79,6 @@ export interface CreateDraftSubmissionRequest {
   slideUrl?: string;
   reportUrl?: string;
   changeNote?: string;
-}
-
-export interface UpdateDraftSubmissionRequest {
-  repoUrl?: string;
-  demoUrl?: string;
-  slideUrl?: string;
-  reportUrl?: string;
-  changeNote?: string;
-}
-
-export type SubmitSubmissionRequest = UpdateDraftSubmissionRequest;
-
-export interface SelectSubmissionVersionRequest {
-  versionId: number;
 }
 
 function requireData<T>(res: ApiResponse<T>, fallback: string): T {
@@ -115,47 +97,14 @@ export async function getCurrentSubmission(
   return requireData(res.data, 'Submission not found');
 }
 
-export async function createDraftSubmission(
-  req: CreateDraftSubmissionRequest,
-): Promise<SubmissionDetail> {
-  const res = await apiClient.post<ApiResponse<SubmissionDetail>>(
-    '/api/submissions/drafts',
-    req,
-  );
-  return requireData(res.data, 'Create draft failed');
-}
-
-export async function updateDraftSubmission(
-  submissionId: number,
-  req: UpdateDraftSubmissionRequest,
-): Promise<SubmissionDetail> {
-  const res = await apiClient.put<ApiResponse<SubmissionDetail>>(
-    `/api/submissions/${submissionId}/draft`,
-    req,
-  );
-  return requireData(res.data, 'Update draft failed');
-}
-
 export async function submitSubmission(
-  submissionId: number,
-  req: SubmitSubmissionRequest,
+  req: CreateSubmissionRequest,
 ): Promise<SubmissionDetail> {
   const res = await apiClient.post<ApiResponse<SubmissionDetail>>(
-    `/api/submissions/${submissionId}/submit`,
+    '/api/submissions',
     req,
   );
-  return requireData(res.data, 'Final submit failed');
-}
-
-export async function resubmitSubmission(
-  submissionId: number,
-  req: SubmitSubmissionRequest,
-): Promise<SubmissionDetail> {
-  const res = await apiClient.post<ApiResponse<SubmissionDetail>>(
-    `/api/submissions/${submissionId}/resubmit`,
-    req,
-  );
-  return requireData(res.data, 'Resubmit failed');
+  return requireData(res.data, 'Submit failed');
 }
 
 export async function getSubmissionDetail(
@@ -167,23 +116,15 @@ export async function getSubmissionDetail(
   return requireData(res.data, 'Submission not found');
 }
 
-export async function getSubmissionVersions(
-  submissionId: number,
-): Promise<SubmissionVersion[]> {
-  const res = await apiClient.get<ApiResponse<SubmissionVersion[]>>(
-    `/api/submissions/${submissionId}/versions`,
+export async function getSubmissionHistory(
+  teamId: number,
+  roundId: number,
+): Promise<SubmissionAttempt[]> {
+  const res = await apiClient.get<ApiResponse<SubmissionAttempt[]>>(
+    '/api/submissions/history',
+    { params: { teamId, roundId } },
   );
   return res.data.data ?? [];
-}
-
-export async function selectSubmissionVersion(
-  submissionId: number,
-  versionId: number,
-): Promise<void> {
-  await apiClient.patch(
-    `/api/submissions/${submissionId}/select-version`,
-    { versionId },
-  );
 }
 
 export async function getMySubmissionOverview(): Promise<SubmissionMyOverview> {

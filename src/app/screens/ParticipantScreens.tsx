@@ -1,27 +1,24 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import {
-  Users, Send, Trophy, Bell, Plus, Calendar, Clock, CheckCircle2,
+  Users, Send, Trophy, Bell, Calendar, Clock, CheckCircle2,
   ExternalLink, AlertTriangle, Star, ChevronRight, UserPlus, Mail,
-  XCircle, Link, Info, Award, GitBranch
+  XCircle, Link, Info, Award
 } from 'lucide-react';
 import { useAuth } from '../../auth/AuthContext';
 import {
-  createDraftSubmission,
   getMySubmissionOverview,
   getCurrentSubmission,
   getSubmissionDetail,
-  getSubmissionVersions,
+  getSubmissionHistory,
   pingSubmissionModule,
-  resubmitSubmission,
-  selectSubmissionVersion,
   submitSubmission,
-  updateDraftSubmission,
+  type CreateSubmissionRequest,
   type SubmissionMyOverview,
   type SubmissionMyOverviewRound,
   type SubmissionMyOverviewTeam,
   type SubmissionDetail,
-  type SubmissionVersion,
+  type SubmissionAttempt,
 } from '../../api/submissions';
 import { KPICard } from '../components/shared/KPICard';
 import { StatusBadge } from '../components/shared/Badge';
@@ -37,6 +34,16 @@ function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: st
       {actions && <div className="flex items-center gap-2">{actions}</div>}
     </div>
   );
+}
+
+function isValidHttpUrl(value: string): boolean {
+  if (!value.trim()) return true;
+  try {
+    const parsed = new URL(value.trim());
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 const myTeam = {
@@ -56,17 +63,17 @@ const myTeam = {
   ],
 };
 
-const submissionHistory = [
-  { version: 3, repoUrl: 'github.com/codeseals/seal-webapp', demoUrl: 'seal-demo.vercel.app', slideUrl: 'drive.google.com/file/seal-slides', submittedAt: '2026-07-22 14:30', note: 'Added authentication module and improved routing' },
-  { version: 2, repoUrl: 'github.com/codeseals/seal-webapp', demoUrl: 'seal-demo.vercel.app', slideUrl: null, submittedAt: '2026-07-20 09:15', note: 'Fixed CI/CD pipeline issues' },
-  { version: 1, repoUrl: 'github.com/codeseals/seal-webapp', demoUrl: null, slideUrl: null, submittedAt: '2026-07-18 16:42', note: 'Initial submission' },
+const mockSubmissionHistory = [
+  { attemptNumber: 3, repoUrl: 'github.com/codeseals/seal-webapp', demoUrl: 'seal-demo.vercel.app', slideUrl: 'drive.google.com/file/seal-slides', submittedAt: '2026-07-22 14:30', note: 'Added authentication module and improved routing' },
+  { attemptNumber: 2, repoUrl: 'github.com/codeseals/seal-webapp', demoUrl: 'seal-demo.vercel.app', slideUrl: null, submittedAt: '2026-07-20 09:15', note: 'Fixed CI/CD pipeline issues' },
+  { attemptNumber: 1, repoUrl: 'github.com/codeseals/seal-webapp', demoUrl: null, slideUrl: null, submittedAt: '2026-07-18 16:42', note: 'Initial submission' },
 ];
 
 const notifications = [
   { id: 1, type: 'success', title: 'Account Approved', message: 'Your participant account has been approved by the Event Coordinator. You can now join and create teams.', time: '2026-06-21 10:30', read: true },
   { id: 2, type: 'success', title: 'Team Registration Approved', message: 'Your team "Code Seals" has been approved for the Web Application category in SEAL Hackathon Summer 2026.', time: '2026-06-23 14:15', read: true },
   { id: 3, type: 'info', title: 'Scoring Has Begun', message: 'Preliminary Round scoring is now open. Results will be published after scoring is complete.', time: '2026-07-15 09:00', read: false },
-  { id: 4, type: 'warning', title: 'Submission Deadline Reminder', message: 'Preliminary Round submission deadline is 2026-07-25. You have submitted version 3. Resubmission is allowed until the deadline.', time: '2026-07-24 08:00', read: false },
+  { id: 4, type: 'warning', title: 'Submission Deadline Reminder', message: 'Preliminary Round submission deadline is 2026-07-25. Your latest submission is Attempt #3. Resubmission is allowed until the deadline.', time: '2026-07-24 08:00', read: false },
 ];
 
 const publishedResults = {
@@ -256,8 +263,8 @@ export function TeamDetail({ onNavigate }: { onNavigate: (s: string) => void }) 
             <ul className="space-y-2 text-xs text-slate-600">
               <li className="flex items-start gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-0.5" /> 3–5 members required</li>
               <li className="flex items-start gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-0.5" /> One category per event</li>
-              <li className="flex items-start gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-0.5" /> Repository URL required for submission</li>
-              <li className="flex items-start gap-2"><Info className="w-3.5 h-3.5 text-blue-500 flex-shrink-0 mt-0.5" /> Demo & slide links optional</li>
+              <li className="flex items-start gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-0.5" /> Submission artifacts depend on each round</li>
+              <li className="flex items-start gap-2"><Info className="w-3.5 h-3.5 text-blue-500 flex-shrink-0 mt-0.5" /> Only required artifacts appear in the submission form</li>
             </ul>
           </div>
           <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
@@ -299,30 +306,21 @@ export function SubmitProject() {
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null);
   const [selectedRoundId, setSelectedRoundId] = useState<number | null>(null);
   const [submission, setSubmission] = useState<SubmissionDetail | null>(null);
-  const [versions, setVersions] = useState<SubmissionVersion[]>([]);
-  const [repoUrl, setRepoUrl] = useState('https://github.com/demo/code-seals-submission-test');
-  const [demoUrl, setDemoUrl] = useState('https://demo.example.com/code-seals');
-  const [slideUrl, setSlideUrl] = useState('https://docs.google.com/presentation/d/demo');
+  const [submissionHistory, setSubmissionHistory] = useState<SubmissionAttempt[]>([]);
+  const [repoUrl, setRepoUrl] = useState('');
+  const [demoUrl, setDemoUrl] = useState('');
+  const [slideUrl, setSlideUrl] = useState('');
   const [reportUrl, setReportUrl] = useState('');
-  const [changeNote, setChangeNote] = useState('Initial draft from FE demo');
+  const [changeNote, setChangeNote] = useState('Initial submission from FE demo');
   const [manualTeamId, setManualTeamId] = useState('1');
   const [manualRoundId, setManualRoundId] = useState('2');
   const [loadingOverview, setLoadingOverview] = useState(true);
   const [loadingDetail, setLoadingDetail] = useState(false);
-  const [actionLoading, setActionLoading] = useState<'create' | 'update' | 'submit' | null>(null);
-  const [selectionLoadingVersionId, setSelectionLoadingVersionId] = useState<number | null>(null);
+  const [actionLoading, setActionLoading] = useState<'submit' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [backendStatus, setBackendStatus] = useState<'loading' | 'ok' | 'error'>('loading');
   const [backendMessage, setBackendMessage] = useState('Checking backend connection...');
   const [showFallback, setShowFallback] = useState(false);
-
-  const artifactPayload = {
-    repoUrl: repoUrl.trim(),
-    demoUrl: demoUrl.trim(),
-    slideUrl: slideUrl.trim(),
-    reportUrl: reportUrl.trim(),
-    changeNote: changeNote.trim(),
-  };
 
   const selectedTeam = useMemo(
     () => overview?.teams.find(team => team.teamId === selectedTeamId) ?? overview?.teams[0] ?? null,
@@ -334,9 +332,47 @@ export function SubmitProject() {
     [selectedTeam, selectedRoundId],
   );
 
+  const submissionRequirements = selectedRound?.submissionRequirements ?? null;
+  const artifactFields = [
+    submissionRequirements?.requiresRepo ? { key: 'repoUrl' as const, label: 'Repository URL', value: repoUrl } : null,
+    submissionRequirements?.requiresDemo ? { key: 'demoUrl' as const, label: 'Demo URL', value: demoUrl } : null,
+    submissionRequirements?.requiresSlide ? { key: 'slideUrl' as const, label: 'Slide URL', value: slideUrl } : null,
+    submissionRequirements?.requiresReport ? { key: 'reportUrl' as const, label: 'Report URL', value: reportUrl } : null,
+  ].filter((field): field is { key: keyof CreateSubmissionRequest; label: string; value: string } => field !== null);
+  const submissionPayload = useMemo<CreateSubmissionRequest>(() => {
+    const payload: CreateSubmissionRequest = {
+      teamId: selectedTeam?.teamId ?? 0,
+      roundId: selectedRound?.roundId ?? 0,
+      changeNote: changeNote.trim(),
+    };
+
+    if (submissionRequirements?.requiresRepo) payload.repoUrl = repoUrl.trim();
+    if (submissionRequirements?.requiresDemo) payload.demoUrl = demoUrl.trim();
+    if (submissionRequirements?.requiresSlide) payload.slideUrl = slideUrl.trim();
+    if (submissionRequirements?.requiresReport) payload.reportUrl = reportUrl.trim();
+
+    return payload;
+  }, [
+    changeNote,
+    demoUrl,
+    reportUrl,
+    repoUrl,
+    selectedRound?.roundId,
+    selectedTeam?.teamId,
+    slideUrl,
+    submissionRequirements,
+  ]);
+
   const selectedSubmissionId = selectedRound?.submission?.submissionId ?? null;
   const selectedRoundSubmission = selectedRound?.submission ?? null;
-  const currentVersion = submission?.currentVersion ?? selectedRoundSubmission?.currentVersion ?? null;
+  const latestSubmission = submissionHistory.find(item => item.status === 'SUBMITTED')
+    ?? (submission?.status === 'SUBMITTED' ? submission : null)
+    ?? (selectedRoundSubmission?.status === 'SUBMITTED' ? selectedRoundSubmission : null);
+  const displayedSubmission = latestSubmission ?? submission ?? selectedRoundSubmission;
+  const nextAttemptNumber = submissionHistory.reduce(
+    (maximum, attempt) => Math.max(maximum, attempt.attemptNumber),
+    0,
+  ) + 1;
   const isDeadlinePassed = (deadline?: string | null) => {
     if (!deadline) return false;
     const parsed = new Date(deadline);
@@ -344,24 +380,21 @@ export function SubmitProject() {
   };
   const selectedDeadlinePassed = isDeadlinePassed(selectedRound?.submissionDeadline);
   const roundClosedByTime = selectedRound?.status !== 'OPEN_FOR_SUBMISSION' || selectedDeadlinePassed;
-  const hasSubmission = !!selectedRoundSubmission;
-  const isDraftSubmission = submission?.status === 'DRAFT';
-  const isSubmittedSubmission = submission?.status === 'SUBMITTED';
+  const requiredArtifactsPresent = !!submissionRequirements
+    && artifactFields.every(field => !!field.value.trim());
+  const artifactUrlsValid = !!submissionRequirements && [
+    { required: submissionRequirements.requiresRepo, value: repoUrl },
+    { required: submissionRequirements.requiresDemo, value: demoUrl },
+    { required: submissionRequirements.requiresSlide, value: slideUrl },
+    { required: submissionRequirements.requiresReport, value: reportUrl },
+  ].every(field => !field.required || isValidHttpUrl(field.value));
   const canSubmitNow = !!canEdit
-    && !!submission
-    && !!currentVersion
-    && !!currentVersion.repoUrl
+    && !!selectedTeam
+    && !!selectedRound
+    && requiredArtifactsPresent
+    && artifactUrlsValid
     && !roundClosedByTime
-    && actionLoading === null
-    && selectionLoadingVersionId === null;
-  const canResubmitNow = !!canEdit
-    && !!submission
-    && submission.status === 'SUBMITTED'
-    && !!currentVersion
-    && !!currentVersion.repoUrl
-    && !roundClosedByTime
-    && actionLoading === null
-    && selectionLoadingVersionId === null;
+    && actionLoading === null;
 
   const loadOverview = useCallback(async () => {
     setLoadingOverview(true);
@@ -385,18 +418,24 @@ export function SubmitProject() {
     }
   }, []);
 
-  const loadSubmissionDetail = useCallback(async (submissionId: number) => {
+  const loadSubmissionData = useCallback(async (
+    teamId: number,
+    roundId: number,
+    submissionId?: number | null,
+  ) => {
     setLoadingDetail(true);
     try {
-      const detail = await getSubmissionDetail(submissionId);
-      const history = await getSubmissionVersions(submissionId);
+      const [detail, history] = await Promise.all([
+        submissionId ? getSubmissionDetail(submissionId) : Promise.resolve(null),
+        getSubmissionHistory(teamId, roundId),
+      ]);
       setSubmission(detail);
-      setVersions(history);
+      setSubmissionHistory(history);
       setError(null);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load submission detail';
       setSubmission(null);
-      setVersions([]);
+      setSubmissionHistory([]);
       setError(message);
       if (!message.toLowerCase().includes('not found')) {
         toast.error(message);
@@ -440,153 +479,68 @@ export function SubmitProject() {
   }, [selectedTeam, selectedRoundId]);
 
   useEffect(() => {
-    if (!selectedSubmissionId) {
+    if (!selectedTeam || !selectedRound) {
       setSubmission(null);
-      setVersions([]);
+      setSubmissionHistory([]);
       return;
     }
-    void loadSubmissionDetail(selectedSubmissionId);
-  }, [loadSubmissionDetail, selectedSubmissionId]);
+    setSubmission(null);
+    setSubmissionHistory([]);
+    void loadSubmissionData(selectedTeam.teamId, selectedRound.roundId, selectedSubmissionId);
+  }, [loadSubmissionData, selectedRound, selectedSubmissionId, selectedTeam]);
 
-  const handleCreateDraft = useCallback(async (teamIdOverride?: number, roundIdOverride?: number) => {
-    const teamId = teamIdOverride ?? selectedTeam?.teamId;
-    const roundId = roundIdOverride ?? selectedRound?.roundId;
+  const handleSubmit = useCallback(async () => {
+    const teamId = selectedTeam?.teamId;
+    const roundId = selectedRound?.roundId;
     if (!teamId || !roundId) {
       setError('Select a team and round first');
       return;
     }
     if (!canEdit) {
-      setError('Only active team leaders can create or update submissions');
-      return;
-    }
-    if (!repoUrl.trim()) {
-      setError('Repository URL is required');
-      return;
-    }
-
-    setActionLoading('create');
-    setError(null);
-    try {
-      const created = await createDraftSubmission({
-        teamId,
-        roundId,
-        ...artifactPayload,
-      });
-      setSubmission(created);
-      setVersions(created.currentVersion ? [created.currentVersion] : []);
-      toast.success('Draft submission created');
-      await loadOverview();
-      await loadSubmissionDetail(created.submissionId);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Create draft failed';
-      setError(message);
-      toast.error(message);
-    } finally {
-      setActionLoading(null);
-    }
-  }, [artifactPayload, canEdit, loadOverview, loadSubmissionDetail, repoUrl, selectedRound?.roundId, selectedTeam?.teamId]);
-
-  const handleUpdateDraft = useCallback(async (submissionIdOverride?: number) => {
-    const targetSubmissionId = submissionIdOverride ?? submission?.submissionId;
-    if (!targetSubmissionId) return;
-    if (!canEdit) {
-      setError('Only active team leaders can update submissions');
-      return;
-    }
-    setActionLoading('update');
-    setError(null);
-    try {
-      const updated = await updateDraftSubmission(targetSubmissionId, artifactPayload);
-      setSubmission(updated);
-      await loadSubmissionDetail(updated.submissionId);
-      toast.success('Draft updated');
-      await loadOverview();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Update draft failed';
-      setError(message);
-      toast.error(message);
-    } finally {
-      setActionLoading(null);
-    }
-  }, [artifactPayload, canEdit, loadOverview, loadSubmissionDetail, submission]);
-
-  const handleFinalSubmit = useCallback(async (submissionIdOverride?: number) => {
-    const targetSubmissionId = submissionIdOverride ?? submission?.submissionId;
-    if (!targetSubmissionId) return;
-    if (!canEdit) {
       setError('Only active team leaders can submit projects');
       return;
     }
+    if (!submissionRequirements) {
+      setError('Submission requirements are unavailable. Reload the page or contact the coordinator.');
+      return;
+    }
+    const missingRequired = [
+      { required: submissionRequirements.requiresRepo, value: repoUrl, label: 'Repository URL' },
+      { required: submissionRequirements.requiresDemo, value: demoUrl, label: 'Demo URL' },
+      { required: submissionRequirements.requiresSlide, value: slideUrl, label: 'Slide URL' },
+      { required: submissionRequirements.requiresReport, value: reportUrl, label: 'Report URL' },
+    ].find(field => field.required && !field.value.trim());
+    if (missingRequired) {
+      setError(`${missingRequired.label} is required for this round`);
+      return;
+    }
+    const invalidUrl = [
+      { required: submissionRequirements.requiresRepo, value: repoUrl, label: 'Repository URL' },
+      { required: submissionRequirements.requiresDemo, value: demoUrl, label: 'Demo URL' },
+      { required: submissionRequirements.requiresSlide, value: slideUrl, label: 'Slide URL' },
+      { required: submissionRequirements.requiresReport, value: reportUrl, label: 'Report URL' },
+    ].find(field => field.required && !isValidHttpUrl(field.value));
+    if (invalidUrl) {
+      setError(`${invalidUrl.label} must be a valid HTTP or HTTPS URL`);
+      return;
+    }
+
     setActionLoading('submit');
     setError(null);
     try {
-      const submitted = await submitSubmission(targetSubmissionId, {
-        changeNote: changeNote.trim() || 'Final submit using current version',
-      });
+      const submitted = await submitSubmission(submissionPayload);
       setSubmission(submitted);
-      toast.success('Submission finalized');
+      toast.success(`Submission Attempt #${submitted.attemptNumber} created`);
       await loadOverview();
-      await loadSubmissionDetail(submitted.submissionId);
+      await loadSubmissionData(submitted.teamId, submitted.roundId, submitted.submissionId);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Final submit failed';
+      const message = err instanceof Error ? err.message : 'Submit failed';
       setError(message);
       toast.error(message);
     } finally {
       setActionLoading(null);
     }
-  }, [canEdit, changeNote, loadOverview, loadSubmissionDetail, submission]);
-
-  const handleResubmit = useCallback(async (submissionIdOverride?: number) => {
-    const targetSubmissionId = submissionIdOverride ?? submission?.submissionId;
-    if (!targetSubmissionId) return;
-    if (!canEdit) {
-      setError('Only active team leaders can resubmit projects');
-      return;
-    }
-    setActionLoading('submit');
-    setError(null);
-    try {
-      const resubmitted = await resubmitSubmission(targetSubmissionId, {
-        ...artifactPayload,
-      });
-      setSubmission(resubmitted);
-      toast.success('Submission resubmitted');
-      await loadOverview();
-      await loadSubmissionDetail(resubmitted.submissionId);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Resubmit failed';
-      setError(message);
-      toast.error(message);
-    } finally {
-      setActionLoading(null);
-    }
-  }, [artifactPayload, canEdit, loadOverview, loadSubmissionDetail, submission]);
-
-  const handleSelectVersion = useCallback(async (submissionId: number, versionId: number, versionNumber: number) => {
-    if (!canEdit) {
-      setError('Only active team leaders can select submission versions');
-      return;
-    }
-    if (!submission || (submission.status !== 'DRAFT' && submission.status !== 'SUBMITTED')) {
-      setError('Only editable submissions can change the selected version');
-      return;
-    }
-
-    setSelectionLoadingVersionId(versionId);
-    setError(null);
-    try {
-      await selectSubmissionVersion(submissionId, versionId);
-      await loadSubmissionDetail(submissionId);
-      await loadOverview();
-      toast.success(`Version v${versionNumber} selected`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Select version failed';
-      setError(message);
-      toast.error(message);
-    } finally {
-      setSelectionLoadingVersionId(null);
-    }
-  }, [canEdit, loadOverview, loadSubmissionDetail, submission]);
+  }, [canEdit, loadOverview, loadSubmissionData, submissionPayload, submissionRequirements]);
 
   const loadManualSubmission = useCallback(async () => {
     const teamId = Number(manualTeamId);
@@ -601,12 +555,12 @@ export function SubmitProject() {
     try {
       const current = await getCurrentSubmission(teamId, roundId);
       setSubmission(current);
-      await loadSubmissionDetail(current.submissionId);
+      await loadSubmissionData(teamId, roundId, current.submissionId);
       toast.success('Loaded submission by teamId and roundId');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load submission';
       setSubmission(null);
-      setVersions([]);
+      setSubmissionHistory([]);
       setError(message);
       if (message.toLowerCase().includes('not found')) {
         toast.message('No submission yet for that team/round');
@@ -616,13 +570,13 @@ export function SubmitProject() {
     } finally {
       setLoadingDetail(false);
     }
-  }, [loadSubmissionDetail, manualRoundId, manualTeamId]);
+  }, [loadSubmissionData, manualRoundId, manualTeamId]);
 
   return (
     <div className="p-7 space-y-5">
       <PageHeader
         title="Project Submission Tracking"
-        subtitle="Choose your team and round, then create draft, update artifacts, and submit"
+        subtitle="Choose your team and round, then submit a new official attempt"
         actions={
           <button
             onClick={loadOverview}
@@ -746,7 +700,7 @@ export function SubmitProject() {
                                   <CheckCircle2 className="w-3.5 h-3.5" /> {round.submission.status}
                                 </span>
                                 <span className="ml-2 text-xs text-slate-500">
-                                  Current version {round.submission.currentVersion ? `v${round.submission.currentVersion.versionNumber}` : 'none'}
+                                  Latest Submission: Attempt #{round.submission.attemptNumber}
                                   {round.submission.submittedAt ? ` • submitted ${round.submission.submittedAt}` : ''}
                                 </span>
                               </>
@@ -759,39 +713,14 @@ export function SubmitProject() {
                         </div>
                         <div className="flex flex-col items-end gap-2 flex-shrink-0">
                           {round.submission ? (
-                            round.submission.status === 'DRAFT' ? (
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); void handleUpdateDraft(round.submission?.submissionId); }}
-                                  disabled={!canEdit || actionLoading !== null || roundClosedByTimeForRound}
-                                  className="text-xs bg-blue-50 text-blue-700 hover:bg-blue-100 px-2.5 py-1.5 rounded-lg font-medium disabled:opacity-50"
-                                >
-                                  Update Draft
-                                </button>
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); void handleFinalSubmit(round.submission?.submissionId); }}
-                                  disabled={!canEdit || actionLoading !== null || roundClosedByTimeForRound}
-                                  className="text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 px-2.5 py-1.5 rounded-lg font-medium disabled:opacity-50"
-                                >
-                                  Final Submit
-                                </button>
-                              </div>
-                            ) : (
-                              <button
-                                onClick={(e) => { e.stopPropagation(); setSelectedRoundId(round.roundId); }}
-                                className="text-xs bg-slate-100 text-slate-700 hover:bg-slate-200 px-2.5 py-1.5 rounded-lg font-medium"
-                              >
-                                View Detail
-                              </button>
-                            )
-                          ) : round.status === 'OPEN_FOR_SUBMISSION' ? (
                             <button
-                              onClick={(e) => { e.stopPropagation(); void handleCreateDraft(team.teamId, round.roundId); }}
-                              disabled={!canEdit || actionLoading !== null || roundClosedByTimeForRound || !repoUrl.trim()}
-                              className="text-xs bg-blue-700 text-white hover:bg-blue-800 px-2.5 py-1.5 rounded-lg font-medium disabled:opacity-50"
+                              onClick={(e) => { e.stopPropagation(); setSelectedRoundId(round.roundId); }}
+                              className="text-xs bg-slate-100 text-slate-700 hover:bg-slate-200 px-2.5 py-1.5 rounded-lg font-medium"
                             >
-                              Create Draft
+                              View Details
                             </button>
+                          ) : !roundClosedByTimeForRound ? (
+                            <span className="text-xs text-slate-500">Select to submit</span>
                           ) : (
                             <span className="text-xs text-slate-400">Closed</span>
                           )}
@@ -820,32 +749,34 @@ export function SubmitProject() {
 
             {selectedTeam && selectedRound ? (
               <>
-                <div className={`border rounded-xl p-4 flex items-start gap-3 ${submission ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200'}`}>
-                  {submission ? <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" /> : <Info className="w-4 h-4 text-slate-600 flex-shrink-0 mt-0.5" />}
+                <div className={`border rounded-xl p-4 flex items-start gap-3 ${displayedSubmission ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200'}`}>
+                  {displayedSubmission ? <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" /> : <Info className="w-4 h-4 text-slate-600 flex-shrink-0 mt-0.5" />}
                   <div>
-                    <p className={`text-sm font-semibold ${submission ? 'text-emerald-800' : 'text-slate-800'}`}>
-                      {submission ? `Submission loaded - ${submission.status}` : 'No submission yet'}
+                    <p className={`text-sm font-semibold ${displayedSubmission ? 'text-emerald-800' : 'text-slate-800'}`}>
+                      {displayedSubmission
+                        ? `Latest Submission: Attempt #${displayedSubmission.attemptNumber}`
+                        : 'No submission yet'}
                     </p>
-                    <p className={`text-sm mt-0.5 ${submission ? 'text-emerald-700' : 'text-slate-600'}`}>
-                      {submission
-                        ? `Submission #${submission.submissionId}. Current version: ${currentVersion ? `v${currentVersion.versionNumber}` : 'none'}.`
+                    <p className={`text-sm mt-0.5 ${displayedSubmission ? 'text-emerald-700' : 'text-slate-600'}`}>
+                      {latestSubmission
+                        ? `Submission #${latestSubmission.submissionId} is an official immutable attempt.`
                         : selectedDeadlinePassed
                           ? 'The submission deadline has passed. You can only view detail and history.'
-                          : 'Create a draft from this round card or from the action panel below.'}
+                          : `Complete the form below to create Submission Attempt #${nextAttemptNumber}.`}
                     </p>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3 text-sm mt-4">
                   {[
-                    ['Status', submission?.status ?? 'No submission yet'],
+                    ['Status', displayedSubmission?.status ?? 'No submission yet'],
                     ['Team', `${selectedTeam.teamName} (#${selectedTeam.teamId})`],
                     ['Round', `${selectedRound.roundName} (#${selectedRound.roundId})`],
                     ['Event', `${selectedTeam.eventName} (#${selectedTeam.eventId})`],
                     ['Category', `${selectedTeam.categoryName} (#${selectedTeam.categoryId})`],
-                    ['Submitted At', submission?.submittedAt ?? 'Not submitted'],
-                    ['Last Updated', submission?.lastUpdatedAt ?? 'Not updated'],
-                    ['Current Version', currentVersion ? `v${currentVersion.versionNumber}` : 'None'],
+                    ['Submitted At', displayedSubmission?.submittedAt ?? 'Not submitted'],
+                    ['Last Updated', displayedSubmission?.lastUpdatedAt ?? 'Not updated'],
+                    ['Attempt', displayedSubmission ? `Attempt #${displayedSubmission.attemptNumber}` : 'None'],
                   ].map(([label, value]) => (
                     <div key={label} className="p-3 bg-slate-50 rounded-lg">
                       <p className="text-xs text-slate-500">{label}</p>
@@ -854,16 +785,16 @@ export function SubmitProject() {
                   ))}
                 </div>
 
-                {currentVersion && (
-                  <div className="bg-white border border-slate-200 rounded-xl p-4 mt-4">
-                    <h4 className="text-sm font-semibold text-slate-900 mb-3">Current Version</h4>
+                {displayedSubmission && (
+                  <div id="submission-detail" className="bg-white border border-slate-200 rounded-xl p-4 mt-4">
+                    <h4 className="text-sm font-semibold text-slate-900 mb-3">Latest Submission</h4>
                     <div className="space-y-2 text-sm">
                       {[
-                        ['Repository', currentVersion.repoUrl],
-                        ['Demo', currentVersion.demoUrl],
-                        ['Slides', currentVersion.slideUrl],
-                        ['Report', currentVersion.reportUrl],
-                        ['Change Note', currentVersion.changeNote],
+                        ['Repository', displayedSubmission.repoUrl],
+                        ['Demo', displayedSubmission.demoUrl],
+                        ['Slides', displayedSubmission.slideUrl],
+                        ['Report', displayedSubmission.reportUrl],
+                        ['Change Note', displayedSubmission.changeNote],
                       ].map(([label, value]) => (
                         <div key={label} className="flex gap-3 border-b border-slate-100 pb-2 last:border-0 last:pb-0">
                           <span className="w-28 text-slate-500 flex-shrink-0">{label}</span>
@@ -875,135 +806,140 @@ export function SubmitProject() {
                 )}
 
                 <div className="bg-white border border-slate-200 rounded-xl p-4 mt-4">
-                  <h4 className="text-sm font-semibold text-slate-900 mb-3">Submission Actions</h4>
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      {[
-                        ['Repository URL', repoUrl, setRepoUrl, 'https://github.com/team/project'],
-                        ['Demo URL', demoUrl, setDemoUrl, 'https://your-demo.vercel.app'],
-                        ['Slide URL', slideUrl, setSlideUrl, 'https://drive.google.com/...'],
-                        ['Report URL', reportUrl, setReportUrl, 'https://docs.google.com/...'],
-                      ].map(([label, value, setter, placeholder]) => (
-                        <div key={label as string}>
-                          <label className="block text-sm font-medium text-slate-700 mb-1">{label as string}</label>
-                          <div className="relative">
-                            <Link className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
-                            <input
-                              value={value as string}
-                              onChange={e => (setter as React.Dispatch<React.SetStateAction<string>>)(e.target.value)}
-                              className="w-full pl-9 pr-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"
-                              placeholder={placeholder as string}
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">Change Note</label>
-                      <textarea
-                        value={changeNote}
-                        onChange={e => setChangeNote(e.target.value)}
-                        className="w-full min-h-20 border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"
-                        placeholder="Describe what changed in this version"
-                      />
-                    </div>
-                    <div className="bg-slate-50 rounded-lg p-3 text-xs text-slate-500 flex items-start gap-2">
-                      <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-                      Draft updates create a new submission version. Final submit uses the current version unless new artifact URLs are provided.
-                    </div>
-                    {selectedDeadlinePassed && (
+                  <h4 className="text-sm font-semibold text-slate-900 mb-3">
+                    {roundClosedByTime ? 'Read-only Actions' : `Submit New Attempt #${nextAttemptNumber}`}
+                  </h4>
+                  {roundClosedByTime ? (
+                    <div className="space-y-3">
                       <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
-                        Deadline passed. Mutating actions are disabled; detail and version history remain available.
+                        The submission deadline has passed. New attempts are no longer accepted.
                       </div>
-                    )}
-                    <div className={`rounded-lg border px-3 py-2 text-xs ${currentVersion ? 'border-blue-200 bg-blue-50/50 text-blue-800' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
-                      {currentVersion ? (
-                        <>
-                          <strong>You are submitting Version #{currentVersion.versionNumber}</strong>
-                          <div className="mt-1 break-all">Repo: {currentVersion.repoUrl}</div>
-                          <div className="mt-1 break-words">Note: {currentVersion.changeNote || '-'}</div>
-                        </>
-                      ) : (
-                        <strong>No current version selected. Select a version before final submit.</strong>
+                      <div className="flex flex-wrap gap-3">
+                        <button
+                          onClick={() => document.getElementById('submission-detail')?.scrollIntoView({ behavior: 'smooth' })}
+                          className="text-sm font-semibold px-4 py-2 rounded-lg border border-slate-200 hover:bg-slate-50"
+                        >
+                          View Details
+                        </button>
+                        <button
+                          onClick={() => document.getElementById('submission-history')?.scrollIntoView({ behavior: 'smooth' })}
+                          className="text-sm font-semibold px-4 py-2 rounded-lg border border-slate-200 hover:bg-slate-50"
+                        >
+                          View Submission History
+                        </button>
+                      </div>
+                    </div>
+                  ) : !submissionRequirements ? (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                      Submission requirements could not be loaded. Submission is disabled; reload the page or contact the coordinator.
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        {artifactFields.map(({ key, label, value }) => {
+                          const setter = {
+                            repoUrl: setRepoUrl,
+                            demoUrl: setDemoUrl,
+                            slideUrl: setSlideUrl,
+                            reportUrl: setReportUrl,
+                          }[key];
+                          const placeholder = {
+                            repoUrl: 'https://github.com/team/project',
+                            demoUrl: 'https://your-demo.vercel.app',
+                            slideUrl: 'https://drive.google.com/...',
+                            reportUrl: 'https://docs.google.com/...',
+                          }[key];
+                          const hasValue = !!value.trim();
+                          const validUrl = isValidHttpUrl(value);
+                          const fieldError = !hasValue
+                            ? `${label} is required for this round`
+                            : !validUrl
+                              ? `${label} must be a valid HTTP or HTTPS URL`
+                              : '';
+                          return (
+                          <div key={label}>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">
+                              {label} *
+                            </label>
+                            <div className="relative">
+                              <Link className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+                              <input
+                                type="url"
+                                required
+                                value={value}
+                                onChange={e => setter(e.target.value)}
+                                className="w-full pl-9 pr-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"
+                                placeholder={placeholder}
+                              />
+                            </div>
+                            <p className={`mt-1 text-xs ${fieldError ? 'text-rose-600' : 'text-slate-500'}`}>
+                              {fieldError || 'Required for this round'}
+                            </p>
+                          </div>
+                          );
+                        })}
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Change Note</label>
+                        <textarea
+                          value={changeNote}
+                          onChange={e => setChangeNote(e.target.value)}
+                          className="w-full min-h-20 border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"
+                          placeholder="Describe what changed in this submission"
+                        />
+                      </div>
+                      <div className="bg-slate-50 rounded-lg p-3 text-xs text-slate-500 flex items-start gap-2">
+                        <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                        Form changes are local and not official until submitted. Each submission creates a new immutable attempt.
+                      </div>
+                      {!canSubmitNow && (
+                        <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                          Fix the highlighted requirements before submitting.
+                        </div>
                       )}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-3 pt-1">
                       <button
-                        onClick={() => void handleCreateDraft()}
-                        disabled={!canEdit || actionLoading !== null || selectionLoadingVersionId !== null || roundClosedByTime || hasSubmission || !selectedTeam || !selectedRound || !repoUrl.trim()}
-                        className="flex items-center gap-2 bg-blue-800 hover:bg-blue-900 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors disabled:opacity-50"
+                        onClick={() => void handleSubmit()}
+                        disabled={!canSubmitNow}
+                        className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors disabled:opacity-50"
                       >
-                        <Plus className="w-4 h-4" /> {actionLoading === 'create' ? 'Creating...' : hasSubmission ? 'Draft Exists' : 'Create Draft'}
+                        <Send className="w-4 h-4" /> {actionLoading === 'submit' ? 'Submitting...' : `Submit New Attempt #${nextAttemptNumber}`}
                       </button>
-                      <button
-                        onClick={() => void handleUpdateDraft()}
-                        disabled={!canEdit || !isDraftSubmission || actionLoading !== null || selectionLoadingVersionId !== null || roundClosedByTime || !repoUrl.trim()}
-                        className="flex items-center gap-2 border border-blue-200 bg-blue-50 hover:bg-blue-100 text-blue-700 text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors disabled:opacity-50"
-                      >
-                        <GitBranch className="w-4 h-4" /> {actionLoading === 'update' ? 'Updating...' : 'Update Draft'}
-                      </button>
-                      {isDraftSubmission ? (
-                        <button
-                          onClick={() => void handleFinalSubmit()}
-                          disabled={!canSubmitNow}
-                          className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors disabled:opacity-50"
-                        >
-                          <Send className="w-4 h-4" /> {actionLoading === 'submit' ? 'Submitting...' : 'Final Submit'}
-                        </button>
-                      ) : isSubmittedSubmission ? (
-                        <button
-                          onClick={() => void handleResubmit()}
-                          disabled={!canResubmitNow}
-                          className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors disabled:opacity-50"
-                        >
-                          <Send className="w-4 h-4" /> {actionLoading === 'submit' ? 'Resubmitting...' : 'Resubmit'}
-                        </button>
-                      ) : null}
                     </div>
-                  </div>
+                  )}
                 </div>
 
-                <div className="bg-white border border-slate-200 rounded-xl p-4 mt-4">
+                <div id="submission-history" className="bg-white border border-slate-200 rounded-xl p-4 mt-4">
                   <div className="flex items-center justify-between mb-3">
-                    <h4 className="text-sm font-semibold text-slate-900">Version History</h4>
-                    <span className="text-xs text-slate-500">{versions.length} versions</span>
+                    <h4 className="text-sm font-semibold text-slate-900">Submission History</h4>
+                    <span className="text-xs text-slate-500">{submissionHistory.length} attempts</span>
                   </div>
-                  {versions.length === 0 ? (
-                    <p className="text-sm text-slate-500">No versions yet.</p>
+                  {submissionHistory.length === 0 ? (
+                    <p className="text-sm text-slate-500">No submission history yet.</p>
                   ) : (
                     <div className="space-y-3">
-                      {versions.map(version => (
-                        <div key={version.versionId} className={`p-3.5 rounded-lg border ${version.versionId === submission?.currentVersionId ? 'border-blue-200 bg-blue-50/30' : 'border-slate-100'}`}>
+                      {submissionHistory.map(attempt => (
+                        <div key={attempt.submissionId} className={`p-3.5 rounded-lg border ${attempt.submissionId === latestSubmission?.submissionId ? 'border-blue-200 bg-blue-50/30' : 'border-slate-100'}`}>
                           <div className="flex items-center justify-between mb-2">
                             <div className="flex items-center gap-2">
-                              <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded ${version.versionId === submission?.currentVersionId ? 'bg-blue-800 text-white' : 'bg-slate-100 text-slate-600'}`}>v{version.versionNumber}</span>
-                              {version.versionId === submission?.currentVersionId && <span className="text-xs text-blue-600 font-medium">Current</span>}
+                              <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded ${attempt.submissionId === latestSubmission?.submissionId ? 'bg-blue-800 text-white' : 'bg-slate-100 text-slate-600'}`}>Attempt #{attempt.attemptNumber}</span>
+                              <span className="text-xs text-slate-600 font-medium">{attempt.status}</span>
                             </div>
-                            <span className="text-xs font-mono text-slate-400">{version.submittedAt}</span>
+                            <span className="text-xs font-mono text-slate-400">{attempt.submittedAt ?? attempt.lastUpdatedAt ?? '-'}</span>
                           </div>
-                          <p className="text-xs text-slate-600 mb-2">{version.changeNote || 'No change note'}</p>
+                          <p className="text-xs text-slate-600 mb-2">{attempt.changeNote || 'No change note'}</p>
                           <div className="grid grid-cols-2 gap-2 text-xs">
-                            <span className="text-slate-500 break-all">Repo: <span className="text-slate-800">{version.repoUrl}</span></span>
-                            <span className="text-slate-500 break-all">Demo: <span className="text-slate-800">{version.demoUrl || '-'}</span></span>
-                            <span className="text-slate-500 break-all">Slides: <span className="text-slate-800">{version.slideUrl || '-'}</span></span>
-                            <span className="text-slate-500 break-all">Report: <span className="text-slate-800">{version.reportUrl || '-'}</span></span>
-                            <span className="text-slate-500">Submitted by: <span className="text-slate-800">{version.submittedBy}</span></span>
+                            <span className="text-slate-500 break-all">Repo: <span className="text-slate-800">{attempt.repoUrl || '-'}</span></span>
+                            <span className="text-slate-500 break-all">Demo: <span className="text-slate-800">{attempt.demoUrl || '-'}</span></span>
+                            <span className="text-slate-500 break-all">Slides: <span className="text-slate-800">{attempt.slideUrl || '-'}</span></span>
+                            <span className="text-slate-500 break-all">Report: <span className="text-slate-800">{attempt.reportUrl || '-'}</span></span>
+                            <span className="text-slate-500">Submitted by: <span className="text-slate-800">{attempt.submittedBy || '-'}</span></span>
                           </div>
                           <div className="mt-3 flex items-center justify-between gap-3">
-                          {version.versionId === submission?.currentVersionId ? (
-                            <span className="text-xs font-medium text-blue-700 bg-blue-50 px-2 py-1 rounded-full">Current version</span>
-                          ) : (
-                            <span className="text-xs text-slate-500">Available to select</span>
-                          )}
-                          {(isDraftSubmission || isSubmittedSubmission) && canEdit && !roundClosedByTime && version.versionId !== submission?.currentVersionId && (
-                            <button
-                              onClick={() => void handleSelectVersion(submission.submissionId, version.versionId, version.versionNumber)}
-                              disabled={selectionLoadingVersionId !== null || actionLoading !== null}
-                              className="text-xs bg-blue-800 text-white hover:bg-blue-900 px-2.5 py-1.5 rounded-lg font-medium disabled:opacity-50"
-                            >
-                                {selectionLoadingVersionId === version.versionId ? 'Selecting...' : 'Select this version'}
-                              </button>
-                            )}
+                            <span className="text-xs text-slate-500">
+                              {attempt.submissionId === latestSubmission?.submissionId
+                                ? 'Latest official submission'
+                                : 'Official submission attempt'}
+                            </span>
                           </div>
                         </div>
                       ))}
@@ -1073,8 +1009,8 @@ function SubmitProjectMock() {
           <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex items-start gap-3">
             <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
             <div>
-              <p className="text-sm font-semibold text-emerald-800">Submission Received — Version 3</p>
-              <p className="text-sm text-emerald-700 mt-0.5">Last submitted: 2026-07-22 14:30. You may resubmit until the deadline.</p>
+              <p className="text-sm font-semibold text-emerald-800">Latest Submission — Attempt #3</p>
+              <p className="text-sm text-emerald-700 mt-0.5">Last submitted: 2026-07-22 14:30. You may submit a new attempt until the deadline.</p>
             </div>
           </div>
 
@@ -1125,22 +1061,22 @@ function SubmitProjectMock() {
               </div>
               <div className="flex items-center gap-3 pt-1">
                 <button onClick={() => setSubmitted(true)} disabled={!repoUrl.trim()} className="flex items-center gap-2 bg-blue-800 hover:bg-blue-900 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors disabled:opacity-50">
-                  <Send className="w-4 h-4" /> Resubmit (v4)
+                  <Send className="w-4 h-4" /> Submit New Attempt #4
                 </button>
               </div>
             </div>
           </div>
 
-          {/* Version History */}
+          {/* Submission History */}
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-            <h3 className="font-semibold text-slate-900 mb-4" style={{ fontFamily: 'var(--font-display)' }}>Version History</h3>
+            <h3 className="font-semibold text-slate-900 mb-4" style={{ fontFamily: 'var(--font-display)' }}>Submission History</h3>
             <div className="space-y-3">
               {submissionHistory.map((s, i) => (
                 <div key={i} className={`p-3.5 rounded-lg border ${i === 0 ? 'border-blue-200 bg-blue-50/30' : 'border-slate-100'}`}>
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
-                      <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded ${i === 0 ? 'bg-blue-800 text-white' : 'bg-slate-100 text-slate-600'}`}>v{s.version}</span>
-                      {i === 0 && <span className="text-xs text-blue-600 font-medium">Current</span>}
+                      <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded ${i === 0 ? 'bg-blue-800 text-white' : 'bg-slate-100 text-slate-600'}`}>Attempt #{s.attemptNumber}</span>
+                      {i === 0 && <span className="text-xs text-blue-600 font-medium">Latest Submission</span>}
                     </div>
                     <span className="text-xs font-mono text-slate-400">{s.submittedAt}</span>
                   </div>
@@ -1172,7 +1108,7 @@ function SubmitProjectMock() {
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
             <AlertTriangle className="w-4 h-4 text-amber-600 mb-2" />
             <p className="text-xs font-semibold text-amber-800">Resubmission Allowed</p>
-            <p className="text-xs text-amber-700 mt-1">You can resubmit any time before the deadline. Only the latest version will be evaluated.</p>
+            <p className="text-xs text-amber-700 mt-1">You can submit a new attempt before the deadline. Each submitted attempt remains in submission history.</p>
           </div>
         </div>
       </div>
