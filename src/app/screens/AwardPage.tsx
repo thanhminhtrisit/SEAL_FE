@@ -3,35 +3,85 @@ import { award } from '../../api/award';
 import { AwardResponse } from '../../app/types';
 
 export const AwardsPage: React.FC = () => {
-  const eventId = 1; // Giả định đang ở Event ID 1 để test khớp dữ liệu MySQL
+  // Đug sửa đổi: Chuyển eventId từ biến fix cứng thành STATE
+  const [selectedEventId, setSelectedEventId] = useState<string>(''); 
+  const [events, setEvents] = useState<any[]>([]); // State lưu danh sách sự kiện
+  const [categories, setCategories] = useState<any[]>([]); 
+  const [eligibleTeams, setEligibleTeams] = useState<any[]>([]); 
   const [awards, setAwards] = useState<AwardResponse[]>([]);
-  const [eligibleTeams, setEligibleTeams] = useState<any[]>([]); // Thêm state lưu đội đủ điều kiện
+  
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  // State cho Form tạo giải thưởng mới
+  // State cho Form
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>(''); 
   const [teamId, setTeamId] = useState<string>('');
   const [awardType, setAwardType] = useState<string>('FIRST_PLACE');
   const [description, setDescription] = useState<string>('');
 
-  // Tải danh sách giải thưởng và đội đủ điều kiện khi mở màn hình
+  // 1. Vừa vào trang thì tải ngay danh sách tất cả các Sự kiện
   useEffect(() => {
-    loadAwards();
-    loadEligibleTeams();
-  }, [eventId]);
+    const loadAllEvents = async () => {
+      try {
+        const data = await award.getEvents();
+        setEvents(data || []);
+      } catch (err) {
+        console.error('Lỗi tải danh sách sự kiện:', err);
+      }
+    };
+    loadAllEvents();
+  }, []);
 
-  const loadAwards = async () => {
+  // 2. Khi người dùng THAY ĐỔI chọn Event -> Reset form cũ và tải các Hạng mục + Giải thưởng mới
+  useEffect(() => {
+    if (selectedEventId) {
+      loadCategories(Number(selectedEventId));
+      loadAwards(Number(selectedEventId));
+      
+      // Reset lại các lựa chọn cũ ở tầng dưới
+      setSelectedCategoryId('');
+      setEligibleTeams([]);
+      setTeamId('');
+    } else {
+      setCategories([]);
+      setAwards([]);
+      setSelectedCategoryId('');
+      setEligibleTeams([]);
+      setTeamId('');
+    }
+  }, [selectedEventId]);
+
+  // 3. Khi người dùng THAY ĐỔI chọn Hạng mục -> Tải danh sách đội thi
+  useEffect(() => {
+    if (selectedEventId && selectedCategoryId) {
+      loadEligibleTeams(Number(selectedEventId), Number(selectedCategoryId));
+    } else {
+      setEligibleTeams([]);
+      setTeamId('');
+    }
+  }, [selectedCategoryId]);
+
+  const loadAwards = async (eId: number) => {
     try {
-      const data = await award.getAwardsByEvent(eventId);
-      setAwards(data);
+      const data = await award.getAwardsByEvent(eId);
+      setAwards(data || []);
     } catch (err) {
       console.error('Lỗi tải danh sách giải thưởng:', err);
     }
   };
 
-  const loadEligibleTeams = async () => {
+  const loadCategories = async (eId: number) => {
     try {
-      const data = await award.getEligibleTeams(eventId);
+      const data = await award.getCategoriesByEvent(eId);
+      setCategories(data || []);
+    } catch (err) {
+      console.error('Lỗi tải danh mục:', err);
+    }
+  };
+
+  const loadEligibleTeams = async (eId: number, cId: number) => {
+    try {
+      const data = await award.getEligibleTeams(eId, cId);
       setEligibleTeams(data || []);
     } catch (err) {
       console.error('Lỗi tải danh sách đội đủ điều kiện:', err);
@@ -40,8 +90,8 @@ export const AwardsPage: React.FC = () => {
 
   const handleSubmitAward = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!teamId) {
-      alert('Vui lòng chọn đội thi nhận giải!');
+    if (!selectedEventId || !selectedCategoryId || !teamId) {
+      alert('Vui lòng điền đầy đủ các thông tin bắt buộc!');
       return;
     }
 
@@ -50,26 +100,25 @@ export const AwardsPage: React.FC = () => {
 
     try {
       await award.createAward({
-        eventId,
+        eventId: Number(selectedEventId),
+        categoryId: Number(selectedCategoryId),
         teamId: Number(teamId),
-        rankingId: null, // Đã cấu hình subquery tự động ở tầng DB
+        rankingId: null, 
         awardType,
         description
       });
 
       alert('Trao giải thưởng thành công!');
-      // Reset form và làm mới danh sách
       setTeamId('');
       setDescription('');
-      loadAwards();
+      loadAwards(Number(selectedEventId)); // Làm mới bảng danh sách bên phải
     } catch (err: any) {
-      setError('Không thể trao giải. Vui lòng kiểm tra lại kết nối mạng.');
+      setError('Không thể trao giải. Vui lòng kiểm tra lại hệ thống.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Hàm helper định dạng màu sắc cho từng loại giải thưởng
   const getAwardBadgeStyle = (type: string) => {
     switch (type) {
       case 'FIRST_PLACE': return 'bg-yellow-100 text-yellow-800 border-yellow-300';
@@ -83,42 +132,77 @@ export const AwardsPage: React.FC = () => {
     <div className="p-6 space-y-6">
       <div className="mb-4">
         <h1 className="text-2xl font-bold text-slate-900">Quản Lý Giải Thưởng & Danh Hiệu</h1>
-        <p className="text-sm text-slate-500 mt-0.5">Cấp phát và vinh danh các đội thi có thành tích xuất sắc</p>
+        <p className="text-sm text-slate-500 mt-0.5">Cấp phát và vinh danh các đội thi theo từng Sự kiện và Hạng mục</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* CỘT TẠO GIẢI THƯỞNG (FORM) */}
+        {/* CỘT TẠO GIẢI THƯỞNG */}
         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm h-fit">
           <h2 className="text-lg font-bold text-slate-800 mb-4">Cấp Giải Thưởng Mới</h2>
           
           {error && <div className="p-3 mb-4 text-sm text-red-700 bg-red-50 rounded-lg border border-red-200">{error}</div>}
 
           <form onSubmit={handleSubmitAward} className="space-y-4">
-            {/* ĐÃ THAY THẾ INPUT BẰNG SELECT */}
+            
+            {/* 🌟 SELECT 1: CHỌN SỰ KIỆN (EVENT) - THÊM MỚI */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Chọn Sự Kiện *</label>
+              <select 
+                value={selectedEventId}
+                onChange={(e) => setSelectedEventId(e.target.value)}
+                required
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm bg-white"
+              >
+                <option value="" disabled>-- Chọn Sự kiện muốn trao giải --</option>
+                {events.map((ev) => (
+                  <option key={ev.id} value={ev.id}>{ev.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* SELECT 2: CHỌN HẠNG MỤC (Bị khóa nếu chưa chọn Event) */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Hạng Mục (Category) *</label>
+              <select 
+                value={selectedCategoryId}
+                onChange={(e) => setSelectedCategoryId(e.target.value)}
+                required
+                disabled={!selectedEventId}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm bg-white disabled:bg-slate-100 disabled:text-slate-400"
+              >
+                <option value="" disabled>
+                  {!selectedEventId ? '-- Vui lòng chọn Sự kiện trước --' : '-- Chọn Hạng mục thi đấu --'}
+                </option>
+                {categories.map((cat) => (
+                  <option key={cat.id} value={cat.id}>{cat.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* SELECT 3: CHỌN ĐỘI THI (Bị khóa nếu chưa chọn Hạng mục) */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Đội Thi Đạt Giải *</label>
               <select 
                 value={teamId}
                 onChange={(e) => setTeamId(e.target.value)}
                 required
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm bg-white"
+                disabled={!selectedCategoryId}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm bg-white disabled:bg-slate-100 disabled:text-slate-400"
               >
-                <option value="" disabled>-- Chọn đội thi từ Vòng Chung Kết --</option>
+                <option value="" disabled>
+                  {!selectedCategoryId ? '-- Vui lòng chọn Hạng mục trước --' : '-- Chọn đội thi từ Vòng Chung Kết --'}
+                </option>
                 {eligibleTeams.map((team) => (
                   <option key={team.teamId} value={team.teamId}>
                     Hạng {team.rankPosition}: {team.teamName} ({Number(team.totalScore).toFixed(3)} điểm)
                   </option>
                 ))}
               </select>
-              {eligibleTeams.length === 0 && (
-                <p className="text-xs text-amber-600 mt-1 italic">
-                  *Chưa có dữ liệu xếp hạng chung kết. Hãy tính toán xếp hạng trước!
-                </p>
-              )}
             </div>
 
+            {/* SELECT 4: CƠ CẤU GIẢI THƯỞNG */}
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Hạng Mục Giải Thưởng *</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Cơ Cấu Giải Thưởng *</label>
               <select 
                 value={awardType}
                 onChange={(e) => setAwardType(e.target.value)}
@@ -127,12 +211,13 @@ export const AwardsPage: React.FC = () => {
                 <option value="FIRST_PLACE">FIRST PLACE (Giải Nhất)</option>
                 <option value="SECOND_PLACE">SECOND PLACE (Giải Nhì)</option>
                 <option value="THIRD_PLACE">THIRD PLACE (Giải Ba)</option>
-                <option value="BEST_TECHNICAL">BEST TECHNICAL (Giải Kỹ Thuật Xuất Sắc)</option>
-                <option value="BEST_PRESENTATION">BEST PRESENTATION (Giải Thuyết Trình Ấn Tượng)</option>
-                <option value="SPECIAL">SPECIAL (Giải Đặc Biệt / Khuyến Khích)</option>
+                <option value="BEST_TECHNICAL">BEST TECHNICAL (Giải Kỹ Thuật)</option>
+                <option value="BEST_PRESENTATION">BEST PRESENTATION (Giải Thuyết Trình)</option>
+                <option value="SPECIAL">SPECIAL (Giải Khuyến Khích)</option>
               </select>
             </div>
 
+            {/* TEXTAREA: MÔ TẢ */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Mô Tả / Phần Thưởng</label>
               <textarea 
@@ -146,9 +231,9 @@ export const AwardsPage: React.FC = () => {
 
             <button 
               type="submit"
-              disabled={isLoading || eligibleTeams.length === 0}
+              disabled={isLoading || !teamId}
               className={`w-full py-2 px-4 rounded-lg text-white font-semibold text-sm transition-colors
-                ${isLoading || eligibleTeams.length === 0 ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-800 hover:bg-blue-900'}`}
+                ${isLoading || !teamId ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-800 hover:bg-blue-900'}`}
             >
               {isLoading ? 'Đang hệ thống hóa...' : 'Xác Nhận Trao Giải'}
             </button>
@@ -157,7 +242,9 @@ export const AwardsPage: React.FC = () => {
 
         {/* CỘT HIỂN THỊ DANH SÁCH GIẢI THƯỞNG */}
         <div className="lg:col-span-2 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-          <h2 className="text-lg font-bold text-slate-800 mb-4">Danh Sách Đội Đoạt Giải Hiện Tại</h2>
+          <h2 className="text-lg font-bold text-slate-800 mb-4">
+            {selectedEventId ? 'Danh Sách Đội Đoạt Giải Hiện Tại' : 'Vui lòng chọn Sự kiện để xem danh sách giải'}
+          </h2>
           
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
@@ -169,7 +256,13 @@ export const AwardsPage: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {awards.length === 0 ? (
+                {!selectedEventId ? (
+                  <tr>
+                    <td colSpan={3} className="px-4 py-8 text-center text-sm text-slate-400 italic">
+                      Hãy chọn một sự kiện từ form bên trái để xem dữ liệu.
+                    </td>
+                  </tr>
+                ) : awards.length === 0 ? (
                   <tr>
                     <td colSpan={3} className="px-4 py-8 text-center text-sm text-slate-400">
                       Chưa có giải thưởng nào được ghi nhận cho sự kiện này.

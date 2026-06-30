@@ -335,7 +335,6 @@ function ScreenRenderer({ screen, role, onNavigate, selectedEventId, onSelectEve
     case 'coord-ranking': 
       return (
         <RankingScreen 
-          eventId={1} // Tạm fix cứng Event ID = 1 để test khớp với Database
           isCoordinator={role === 'EVENT_COORDINATOR' || role === 'SUPER_COORDINATOR' || role === 'ADMIN'} 
         />
       );
