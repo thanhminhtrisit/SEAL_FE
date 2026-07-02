@@ -133,7 +133,15 @@ export const RankingScreen: React.FC<RankingScreenProps> = ({ isCoordinator = tr
       await ranking.promoteTeams(activeRoundId, selectedTeamIds);
       alert(`Đã thăng hạng thành công ${selectedTeamIds.length} đội sang vòng tiếp theo!`);
       setSelectedTeamIds([]); 
-      await fetchRankings(activeRoundId); 
+
+      const currentRoundIndex = rounds.findIndex(round => round.id === activeRoundId);
+      const nextRound = currentRoundIndex >= 0 ? rounds[currentRoundIndex + 1] : undefined;
+      if (nextRound) {
+        setActiveRoundId(nextRound.id);
+        await fetchRankings(nextRound.id);
+      } else {
+        await fetchRankings(activeRoundId);
+      }
     } catch (err: any) {
       alert("Lỗi khi chuyển vòng: " + err.message);
     } finally {
