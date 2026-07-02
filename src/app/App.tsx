@@ -25,7 +25,7 @@ import {
 } from './screens/CoordinatorEventScreens';
 
 // Judge screens
-import { JudgeDashboard, JudgeSubmissions, JudgeScoringPage } from './screens/JudgeScreens';
+import { JudgeDashboard, JudgeSubmissions, JudgeScoringPage } from './screens/JudgeScreensReal';
 
 // Mentor screens
 import { MentorDashboard, MentorTeams } from './screens/MentorScreens';
@@ -129,9 +129,17 @@ const ROLE_ALLOWED_SCREENS: Record<Role, ReadonlySet<string>> = {
   TEAM_MEMBER: new Set(['participant-dashboard', 'participant-team', 'participant-invitations', 'participant-submit', 'participant-results', 'participant-notifications', ...sharedScreens]),
 };
 
+const screenByPath: Record<string, string> = {
+  '/submission-tracking': 'participant-submit',
+};
+
+function screenFromPath(): string | null {
+  return screenByPath[window.location.pathname] ?? null;
+}
+
 export default function App() {
   const auth = useAuth();
-  const [currentScreen, setCurrentScreen] = useState<string>('landing');
+  const [currentScreen, setCurrentScreen] = useState<string>(() => screenFromPath() ?? 'landing');
 
   // Derive role from JWT — no manual override
   const currentRole: Role = auth.isAuthenticated && auth.role ? auth.role : 'PUBLIC';
@@ -141,7 +149,7 @@ export default function App() {
     if (auth.isAuthenticated && auth.role && publicScreens.has(currentScreen)) {
       setCurrentScreen(defaultScreenByRole[auth.role]);
     }
-  }, [auth.isAuthenticated, auth.role]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [auth.isAuthenticated, auth.role, currentScreen]);
 
   // Guard: unauthenticated access to protected screens → login
   useEffect(() => {
@@ -158,6 +166,11 @@ export default function App() {
   }, []);
 
   const navigate = useCallback((screen: string) => {
+    if (screen === 'participant-submit' && window.location.pathname !== '/submission-tracking') {
+      window.history.pushState(null, '', '/submission-tracking');
+    } else if (screen !== 'participant-submit' && window.location.pathname === '/submission-tracking') {
+      window.history.pushState(null, '', '/');
+    }
     setCurrentScreen(screen);
   }, []);
 
@@ -332,10 +345,10 @@ function ScreenRenderer({ screen, role, onNavigate, selectedEventId, onSelectEve
     case 'coord-judges': return <JudgeAssignment />;
     case 'coord-submissions': return <SubmissionMonitor />;
     case 'coord-scoring': return <ScoringControl />;
-    case 'coord-ranking': 
+    case 'coord-ranking':
       return (
-        <RankingScreen 
-          isCoordinator={role === 'EVENT_COORDINATOR' || role === 'SUPER_COORDINATOR' || role === 'ADMIN'} 
+        <RankingScreen
+          isCoordinator={role === 'EVENT_COORDINATOR' || role === 'SUPER_COORDINATOR' || role === 'ADMIN'}
         />
       );
     case 'coord-awards': return <AwardsPage />;

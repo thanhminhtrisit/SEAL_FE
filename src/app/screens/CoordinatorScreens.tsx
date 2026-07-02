@@ -113,11 +113,11 @@ const judges = [
 ];
 
 const submissions = [
-  { id: 1, team: 'Code Seals', round: 'Preliminary', category: 'Web Application', repoUrl: 'github.com/codeseals/seal-webapp', demoUrl: 'seal-demo.vercel.app', slideUrl: 'drive.google.com/...', submittedAt: '2026-07-22 14:30', status: 'SUBMITTED', version: 3 },
-  { id: 2, team: 'AlphaBot', round: 'Preliminary', category: 'AI/Automation Tool', repoUrl: 'github.com/alphabot/ai-tool', demoUrl: 'alphabot-demo.netlify.app', slideUrl: null, submittedAt: '2026-07-23 10:15', status: 'SUBMITTED', version: 1 },
-  { id: 3, team: 'MobileFirst', round: 'Preliminary', category: 'Mobile Application', repoUrl: 'github.com/mobilefirst/app', demoUrl: null, slideUrl: 'drive.google.com/...', submittedAt: '2026-07-24 16:45', status: 'SUBMITTED', version: 2 },
-  { id: 4, team: 'NexGen', round: 'Preliminary', category: 'Web Application', repoUrl: 'github.com/nexgen/webapp', demoUrl: 'nexgen-webapp.vercel.app', slideUrl: null, submittedAt: '2026-07-24 20:10', status: 'SUBMITTED', version: 1 },
-  { id: 5, team: 'DataFlow', round: 'Preliminary', category: 'AI/Automation Tool', repoUrl: '', demoUrl: '', slideUrl: '', submittedAt: '—', status: 'NOT_SUBMITTED', version: 0 },
+  { id: 1, team: 'Code Seals', round: 'Preliminary', category: 'Web Application', repoUrl: 'github.com/codeseals/seal-webapp', demoUrl: 'seal-demo.vercel.app', slideUrl: 'drive.google.com/...', submittedAt: '2026-07-22 14:30', status: 'SUBMITTED', attemptNumber: 3 },
+  { id: 2, team: 'AlphaBot', round: 'Preliminary', category: 'AI/Automation Tool', repoUrl: 'github.com/alphabot/ai-tool', demoUrl: 'alphabot-demo.netlify.app', slideUrl: null, submittedAt: '2026-07-23 10:15', status: 'SUBMITTED', attemptNumber: 1 },
+  { id: 3, team: 'MobileFirst', round: 'Preliminary', category: 'Mobile Application', repoUrl: 'github.com/mobilefirst/app', demoUrl: null, slideUrl: 'drive.google.com/...', submittedAt: '2026-07-24 16:45', status: 'SUBMITTED', attemptNumber: 2 },
+  { id: 4, team: 'NexGen', round: 'Preliminary', category: 'Web Application', repoUrl: 'github.com/nexgen/webapp', demoUrl: 'nexgen-webapp.vercel.app', slideUrl: null, submittedAt: '2026-07-24 20:10', status: 'SUBMITTED', attemptNumber: 1 },
+  { id: 5, team: 'DataFlow', round: 'Preliminary', category: 'AI/Automation Tool', repoUrl: '', demoUrl: '', slideUrl: '', submittedAt: '—', status: 'NOT_SUBMITTED', attemptNumber: 0 },
 ];
 
 export function CoordDashboard({ onNavigate }: { onNavigate: (s: string) => void }) {
@@ -966,7 +966,7 @@ export function SubmissionMonitor() {
       </div>
       <div className="bg-white rounded-xl shadow-sm border border-slate-200">
         <table className="w-full">
-          <thead><tr className="border-b border-slate-100">{['Team', 'Category', 'Repository URL', 'Demo URL', 'Slides', 'Submitted At', 'Version', 'Status'].map(c => <th key={c} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>)}</tr></thead>
+          <thead><tr className="border-b border-slate-100">{['Team', 'Category', 'Repository URL', 'Demo URL', 'Slides', 'Submitted At', 'Attempt', 'Status'].map(c => <th key={c} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>)}</tr></thead>
           <tbody className="divide-y divide-slate-100">
             {submissions.map(s => (
               <tr key={s.id} className={`hover:bg-slate-50 transition-colors ${s.status === 'NOT_SUBMITTED' ? 'bg-amber-50/40' : ''}`}>
@@ -982,7 +982,7 @@ export function SubmissionMonitor() {
                   {s.slideUrl ? <a href="#" className="text-xs text-purple-600 hover:underline">View</a> : <span className="text-xs text-slate-400">—</span>}
                 </td>
                 <td className="px-4 py-3 text-xs font-mono text-slate-500">{s.submittedAt}</td>
-                <td className="px-4 py-3 text-xs font-mono text-slate-600">v{s.version || '—'}</td>
+                <td className="px-4 py-3 text-xs font-mono text-slate-600">{s.attemptNumber ? `Attempt #${s.attemptNumber}` : '—'}</td>
                 <td className="px-4 py-3"><StatusBadge status={s.status === 'SUBMITTED' ? 'SUBMITTED' : 'PENDING'} label={s.status === 'SUBMITTED' ? 'Submitted' : 'Not Submitted'} /></td>
               </tr>
             ))}
