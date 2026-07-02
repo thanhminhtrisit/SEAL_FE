@@ -3,9 +3,8 @@ import { award } from '../../api/award';
 import { AwardResponse } from '../../app/types';
 
 export const AwardsPage: React.FC = () => {
-  // Đug sửa đổi: Chuyển eventId từ biến fix cứng thành STATE
   const [selectedEventId, setSelectedEventId] = useState<string>(''); 
-  const [events, setEvents] = useState<any[]>([]); // State lưu danh sách sự kiện
+  const [events, setEvents] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]); 
   const [eligibleTeams, setEligibleTeams] = useState<any[]>([]); 
   const [awards, setAwards] = useState<AwardResponse[]>([]);
@@ -13,13 +12,23 @@ export const AwardsPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  // State cho Form
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>(''); 
   const [teamId, setTeamId] = useState<string>('');
   const [awardType, setAwardType] = useState<string>('FIRST_PLACE');
   const [description, setDescription] = useState<string>('');
 
-  // 1. Vừa vào trang thì tải ngay danh sách tất cả các Sự kiện
+  const getErrorMessage = (err: unknown) => {
+    if (err instanceof Error && err.message.trim()) {
+      return err.message
+        .replace(/^Unexpected error:\s*/i, '')
+        .replace(/^Lỗi:\s*/i, '')
+        .trim();
+    }
+
+    return 'Không thể trao giải. Vui lòng kiểm tra lại hệ thống.';
+  };
+
+  // 1. Tải danh sách sự kiện khi mount component
   useEffect(() => {
     const loadAllEvents = async () => {
       try {
@@ -32,13 +41,13 @@ export const AwardsPage: React.FC = () => {
     loadAllEvents();
   }, []);
 
-  // 2. Khi người dùng THAY ĐỔI chọn Event -> Reset form cũ và tải các Hạng mục + Giải thưởng mới
+  // 2. Load lại Hạng mục và Giải thưởng khi đổi Event
   useEffect(() => {
     if (selectedEventId) {
       loadCategories(Number(selectedEventId));
       loadAwards(Number(selectedEventId));
       
-      // Reset lại các lựa chọn cũ ở tầng dưới
+      // Reset state con để tránh lưu cache ID cũ
       setSelectedCategoryId('');
       setEligibleTeams([]);
       setTeamId('');
@@ -51,7 +60,8 @@ export const AwardsPage: React.FC = () => {
     }
   }, [selectedEventId]);
 
-  // 3. Khi người dùng THAY ĐỔI chọn Hạng mục -> Tải danh sách đội thi
+  // 3. Load danh sách Đội thi khi đổi Hạng mục
+  // Đã thêm selectedEventId vào dependency array để React theo dõi state chuẩn hơn
   useEffect(() => {
     if (selectedEventId && selectedCategoryId) {
       loadEligibleTeams(Number(selectedEventId), Number(selectedCategoryId));
@@ -59,7 +69,7 @@ export const AwardsPage: React.FC = () => {
       setEligibleTeams([]);
       setTeamId('');
     }
-  }, [selectedCategoryId]);
+  }, [selectedEventId, selectedCategoryId]);
 
   const loadAwards = async (eId: number) => {
     try {
@@ -81,6 +91,7 @@ export const AwardsPage: React.FC = () => {
 
   const loadEligibleTeams = async (eId: number, cId: number) => {
     try {
+      // Hàm này giờ đây sẽ gọi API với cId = 5, 7, 8... tự động theo DB
       const data = await award.getEligibleTeams(eId, cId);
       setEligibleTeams(data || []);
     } catch (err) {
@@ -101,7 +112,7 @@ export const AwardsPage: React.FC = () => {
     try {
       await award.createAward({
         eventId: Number(selectedEventId),
-        categoryId: Number(selectedCategoryId),
+        categoryId: Number(selectedCategoryId), // Giá trị truyền lên sẽ khớp 100% với Backend
         teamId: Number(teamId),
         rankingId: null, 
         awardType,
@@ -109,11 +120,12 @@ export const AwardsPage: React.FC = () => {
       });
 
       alert('Trao giải thưởng thành công!');
+      // Reset form sau khi thành công
       setTeamId('');
       setDescription('');
-      loadAwards(Number(selectedEventId)); // Làm mới bảng danh sách bên phải
-    } catch (err: any) {
-      setError('Không thể trao giải. Vui lòng kiểm tra lại hệ thống.');
+      loadAwards(Number(selectedEventId));
+    } catch (err) {
+      setError(getErrorMessage(err));
     } finally {
       setIsLoading(false);
     }
@@ -144,7 +156,7 @@ export const AwardsPage: React.FC = () => {
 
           <form onSubmit={handleSubmitAward} className="space-y-4">
             
-            {/* 🌟 SELECT 1: CHỌN SỰ KIỆN (EVENT) - THÊM MỚI */}
+            {/* SELECT 1: SỰ KIỆN */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Chọn Sự Kiện *</label>
               <select 
@@ -160,7 +172,7 @@ export const AwardsPage: React.FC = () => {
               </select>
             </div>
 
-            {/* SELECT 2: CHỌN HẠNG MỤC (Bị khóa nếu chưa chọn Event) */}
+            {/* SELECT 2: HẠNG MỤC */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Hạng Mục (Category) *</label>
               <select 
@@ -174,12 +186,13 @@ export const AwardsPage: React.FC = () => {
                   {!selectedEventId ? '-- Vui lòng chọn Sự kiện trước --' : '-- Chọn Hạng mục thi đấu --'}
                 </option>
                 {categories.map((cat) => (
+                  // Frontend sẽ tự động lấy cat.id (như 5, 7, 8) gán vào option thay vì index
                   <option key={cat.id} value={cat.id}>{cat.name}</option>
                 ))}
               </select>
             </div>
 
-            {/* SELECT 3: CHỌN ĐỘI THI (Bị khóa nếu chưa chọn Hạng mục) */}
+            {/* SELECT 3: ĐỘI THI */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Đội Thi Đạt Giải *</label>
               <select 

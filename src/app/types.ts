@@ -23,6 +23,7 @@ export interface RankingResponse {
 export interface AwardCreateRequest {
   eventId: number;
   teamId: number;
+  categoryId: number;
   rankingId: number | null;
   awardType: string;
   description: string;
