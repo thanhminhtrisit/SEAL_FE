@@ -14,6 +14,7 @@ import type { Role } from '../app/types';
 
 // localStorage key for refresh token
 const LS_REFRESH_TOKEN = 'seal_refresh_token';
+const LS_TEAM_ID = 'seal_my_team_id';
 
 // Map JWT role claim → App Role key.
 // NOTE: ROLE_JUDGE maps to INTERNAL_JUDGE; FE cannot distinguish internal vs
@@ -94,6 +95,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // XSS token theft but require a server-side session endpoint.
     localStorage.setItem(LS_ACCESS_TOKEN, at);
     localStorage.setItem(LS_REFRESH_TOKEN, rt);
+    localStorage.removeItem(LS_TEAM_ID);
     setAccessToken(at);
     const decoded = decodeRole(at);
     if (!decoded) throw new Error('Unrecognised role in token');
@@ -104,6 +106,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await logoutApi();
     localStorage.removeItem(LS_ACCESS_TOKEN);
     localStorage.removeItem(LS_REFRESH_TOKEN);
+    localStorage.removeItem(LS_TEAM_ID);
     setAccessToken(null);
   }, []);
 

@@ -35,10 +35,11 @@ const statusMap: Record<string, BadgeVariant> = {
   NOT_SCORED: 'warning',
 };
 
-export function StatusBadge({ status, label }: { status: string; label?: string }) {
-  const variant = statusMap[status] || 'muted';
+export function StatusBadge({ status, label }: { status?: string | null; label?: string }) {
+  const safeStatus = status ?? '';
+  const variant = statusMap[safeStatus] || 'muted';
   const styles = variantStyles[variant];
-  const displayLabel = label || status.replace(/_/g, ' ');
+  const displayLabel = label || safeStatus.replace(/_/g, ' ') || 'UNKNOWN';
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium font-mono tracking-wide ${styles}`}>
       {displayLabel}
