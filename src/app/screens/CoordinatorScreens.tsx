@@ -401,17 +401,14 @@ export function CreateEventWizard({
   const [roundIds, setRoundIds] = useState<number[]>([]);
 
   // Step 2 – Categories
-  const [categories, setCategories] = useState<CategoryForm[]>([
-    { name: 'Web Application', description: 'Full-stack web apps', mentorId: '' },
-    { name: 'Mobile Application', description: 'iOS/Android mobile apps', mentorId: '' },
-    { name: 'AI/Automation Tool', description: 'ML, AI-powered tools', mentorId: '' },
-  ]);
+  const [categories, setCategories] = useState<CategoryForm[]>([{ name: '', description: '', mentorId: '' }]);
   const [categoryIds, setCategoryIds] = useState<number[]>([]);
 
   // Step 3 – Criteria (multiple sets, each scoped to a round + optional category)
   interface WizardCsForm {
     name: string;
     roundId: number | '';
+    applyToAllRounds: boolean;
     categoryId: number | null;
     promotionTopN: number | '';
     criteria: CriterionForm[];
@@ -419,6 +416,7 @@ export function CreateEventWizard({
   const defaultWizardCsRow = (): WizardCsForm => ({
     name: 'Default Criteria Set',
     roundId: '',
+    applyToAllRounds: false,
     categoryId: null,
     promotionTopN: '',
     criteria: [
@@ -433,14 +431,7 @@ export function CreateEventWizard({
 
   // Step 4 – Budget
   const [budgetId, setBudgetId] = useState<number | null>(null);
-  const [budgetItems, setBudgetItems] = useState<BudgetItemForm[]>([
-    { categoryId: '', description: 'First Place Prize', quantity: 1, unitCost: 15000000 },
-    { categoryId: '', description: 'Second Place Prize', quantity: 1, unitCost: 10000000 },
-    { categoryId: '', description: 'Third Place Prize', quantity: 1, unitCost: 5000000 },
-    { categoryId: '', description: 'Event Day Meals & Drinks', quantity: 1, unitCost: 8000000 },
-    { categoryId: '', description: 'Guest Judge Honorarium', quantity: 2, unitCost: 2000000 },
-    { categoryId: '', description: 'Posters & Online Promotion', quantity: 1, unitCost: 3000000 },
-  ] as BudgetItemForm[]);
+  const [budgetItems, setBudgetItems] = useState<BudgetItemForm[]>([{ categoryId: '', description: '', quantity: 1, unitCost: 0 }]);
 
   // Derived
   const filteredTermPlans = allTermPlans.filter(tp => disciplineId !== '' && tp.disciplineId === (disciplineId as number));
@@ -528,15 +519,16 @@ export function CreateEventWizard({
         for (let i = 0; i < wizardCsSets.length; i++) {
           const cs = wizardCsSets[i];
           if (!cs.name.trim()) { toast.error(`Bộ ${i + 1}: tên không được trống`); return; }
-          if (cs.roundId === '') { toast.error(`Bộ ${i + 1}: vui lòng chọn vòng`); return; }
+          if (!cs.applyToAllRounds && cs.roundId === '') { toast.error(`Bộ ${i + 1}: vui lòng chọn vòng (hoặc tick "Áp cho tất cả")`); return; }
+          if (cs.applyToAllRounds && roundIds.length === 0) { toast.error(`Bộ ${i + 1}: chưa có vòng nào được tạo ở bước 1`); return; }
           const active = cs.criteria.filter(c => c.active);
           if (active.length === 0) { toast.error(`Bộ ${i + 1} (${cs.name}): cần ít nhất 1 criterion active`); return; }
           const tw = active.reduce((s, c) => s + (Number(c.weight) || 0), 0);
           if (tw !== 100) { toast.error(`Bộ ${i + 1} (${cs.name}): tổng weight phải = 100%. Hiện tại: ${tw}%`); return; }
         }
-        // Client-side duplicate warning
-        const pairKeys = wizardCsSets.map(cs => `${cs.roundId}|${String(cs.categoryId)}`);
-        if (pairKeys.some((k, i) => pairKeys.indexOf(k) !== i)) {
+        // Client-side duplicate warning (only for single-round sets)
+        const singleRoundKeys = wizardCsSets.filter(cs => !cs.applyToAllRounds).map(cs => `${cs.roundId}|${String(cs.categoryId)}`);
+        if (singleRoundKeys.some((k, i) => singleRoundKeys.indexOf(k) !== i)) {
           toast.warning('Cảnh báo: có 2+ bộ tiêu chí cùng (vòng, hạng mục)');
         }
         // Create only sets not yet saved
@@ -544,17 +536,34 @@ export function CreateEventWizard({
         for (let i = 0; i < wizardCsSets.length; i++) {
           if (newIds[i] !== null) continue;
           const cs = wizardCsSets[i];
-          const created = await createCriteriaSet(eventId, {
+          const payload = {
             name: cs.name.trim(),
-            roundId: cs.roundId as number,
             categoryId: cs.categoryId ?? undefined,
             promotionTopN: cs.promotionTopN !== '' ? Number(cs.promotionTopN) : undefined,
             criteria: cs.criteria.filter(c => c.active).map((c, idx) => ({
               name: c.name, description: c.description || undefined,
               maxScore: Number(c.maxScore) || 10, weight: Number(c.weight) || 0, displayOrder: idx + 1,
             })),
-          });
-          newIds[i] = created.id;
+          };
+          if (cs.applyToAllRounds) {
+            // Create one set per round; skip rounds that fail (BE duplicate) with warning
+            let firstId: number | null = null;
+            let skipped = 0;
+            for (const rid of roundIds) {
+              try {
+                const created = await createCriteriaSet(eventId, { ...payload, roundId: rid });
+                if (firstId === null) firstId = created.id;
+              } catch {
+                skipped++;
+              }
+            }
+            if (skipped > 0) toast.warning(`${skipped} vòng đã có bộ trùng — bỏ qua`);
+            toast.success(`Đã tạo bộ tiêu chí cho ${roundIds.length - skipped} vòng`);
+            newIds[i] = firstId ?? -1;
+          } else {
+            const created = await createCriteriaSet(eventId, { ...payload, roundId: cs.roundId as number });
+            newIds[i] = created.id;
+          }
         }
         setWizardCsIds(newIds);
       } else if (step === 4 && budgetId === null && eventId) {
@@ -785,7 +794,7 @@ export function CreateEventWizard({
 
           {/* ── Step 2: Categories ─────────────────────────────── */}
           {step === 2 && (
-            <div className="space-y-4">
+            <div className="space-y-3">
               <div className="flex justify-end">
                 <button
                   onClick={() => categoryIds.length === 0 && setCategories(prev => [...prev, { name: '', description: '', mentorId: '' }])}
@@ -795,8 +804,17 @@ export function CreateEventWizard({
                   <Plus className="w-4 h-4" /> Add Category
                 </button>
               </div>
+              {categories.length === 0 && (
+                <p className="text-sm text-slate-400 text-center py-4 border border-dashed border-slate-200 rounded-lg">Chưa có hạng mục nào — bấm Add Category để thêm.</p>
+              )}
               {categories.map((cat, i) => (
-                <div key={i} className="p-4 rounded-lg border border-slate-200 grid grid-cols-3 gap-3">
+                <div key={i} className="p-4 rounded-lg border border-slate-200 grid grid-cols-3 gap-3 relative">
+                  {categoryIds.length === 0 && (
+                    <button onClick={() => setCategories(prev => prev.filter((_, idx) => idx !== i))}
+                      className="absolute top-2 right-2 p-1 text-slate-300 hover:text-red-500 transition-colors" title="Xoá dòng này">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                   <div>
                     <label className="block text-xs font-medium text-slate-600 mb-1">Category Name</label>
                     <input value={cat.name} onChange={e => { const c = [...categories]; c[i] = { ...c[i], name: e.target.value }; setCategories(c); }} disabled={categoryIds.length > 0}
@@ -859,13 +877,27 @@ export function CreateEventWizard({
                           className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold text-slate-600 mb-1">Vòng áp dụng <span className="text-red-500">*</span></label>
-                        <select value={cs.roundId} onChange={e => updateCs({ roundId: e.target.value === '' ? '' : Number(e.target.value) })} disabled={saved}
-                          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 bg-white disabled:opacity-50 disabled:bg-slate-50">
-                          <option value="">-- Chọn vòng --</option>
-                          {savedRounds.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                          {savedRounds.length === 0 && <option disabled>Chưa tạo round (hoàn tất bước 1 trước)</option>}
-                        </select>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-xs font-semibold text-slate-600">Vòng áp dụng {!cs.applyToAllRounds && <span className="text-red-500">*</span>}</label>
+                          <label className="flex items-center gap-1 cursor-pointer select-none">
+                            <input type="checkbox" checked={cs.applyToAllRounds}
+                              onChange={e => updateCs({ applyToAllRounds: e.target.checked, roundId: '' })}
+                              disabled={saved} className="rounded border-slate-300" />
+                            <span className="text-[10px] text-slate-600 font-medium">Áp cho tất cả các vòng</span>
+                          </label>
+                        </div>
+                        {cs.applyToAllRounds ? (
+                          <div className="w-full border border-emerald-200 bg-emerald-50 rounded-lg px-3 py-2 text-xs text-emerald-700 font-medium">
+                            Sẽ tạo 1 bộ cho mỗi vòng ({savedRounds.length > 0 ? savedRounds.map(r => r.name).join(', ') : 'chưa có vòng'})
+                          </div>
+                        ) : (
+                          <select value={cs.roundId} onChange={e => updateCs({ roundId: e.target.value === '' ? '' : Number(e.target.value) })} disabled={saved}
+                            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 bg-white disabled:opacity-50 disabled:bg-slate-50">
+                            <option value="">-- Chọn vòng --</option>
+                            {savedRounds.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                            {savedRounds.length === 0 && <option disabled>Chưa tạo round (hoàn tất bước 1 trước)</option>}
+                          </select>
+                        )}
                       </div>
                       <div>
                         <label className="block text-xs font-semibold text-slate-600 mb-1">Hạng mục</label>
@@ -950,8 +982,12 @@ export function CreateEventWizard({
           {/* ── Step 4: Budget ─────────────────────────────────── */}
           {step === 4 && (
             <div>
+              {budgetItems.length === 0 && (
+                <p className="text-sm text-slate-400 text-center py-4 border border-dashed border-slate-200 rounded-lg mb-3">Chưa có mục ngân sách — bấm Add Budget Item để thêm.</p>
+              )}
+              {budgetItems.length > 0 && (
               <table className="w-full mb-3">
-                <thead><tr className="border-b border-slate-200">{['Category', 'Description', 'Qty', 'Unit Cost (VND)', 'Amount (VND)'].map(c => <th key={c} className="text-left px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>)}</tr></thead>
+                <thead><tr className="border-b border-slate-200">{['Category', 'Description', 'Qty', 'Unit Cost (VND)', 'Amount (VND)', ''].map(c => <th key={c} className="text-left px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>)}</tr></thead>
                 <tbody className="divide-y divide-slate-100">
                   {budgetItems.map((item, i) => {
                     const isValid = item.categoryId !== '' && item.description.trim() !== '';
@@ -979,12 +1015,21 @@ export function CreateEventWizard({
                       <td className={`px-3 py-2 text-sm font-mono font-semibold text-right ${isValid ? 'text-slate-900' : 'text-slate-400 line-through'}`}>
                         {((Number(item.quantity) || 0) * (Number(item.unitCost) || 0)).toLocaleString()}
                       </td>
+                      <td className="px-2 py-2">
+                        {!budgetId && (
+                          <button onClick={() => setBudgetItems(prev => prev.filter((_, idx) => idx !== i))}
+                            className="p-1 text-slate-300 hover:text-red-500 transition-colors" title="Xoá dòng">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </td>
                     </tr>
                     );
                   })}
                 </tbody>
-                <tfoot><tr className="border-t-2 border-slate-200 bg-slate-50"><td colSpan={4} className="px-3 py-2 text-sm font-bold">Total Estimated</td><td className="px-3 py-2 text-sm font-bold text-blue-800 font-mono text-right">{totalBudget.toLocaleString()}</td></tr></tfoot>
+                <tfoot><tr className="border-t-2 border-slate-200 bg-slate-50"><td colSpan={4} className="px-3 py-2 text-sm font-bold">Total Estimated</td><td className="px-3 py-2 text-sm font-bold text-blue-800 font-mono text-right">{totalBudget.toLocaleString()}</td><td /></tr></tfoot>
               </table>
+              )}
               {!budgetId && (
                 <button onClick={() => setBudgetItems(prev => [...prev, { categoryId: '', description: '', quantity: 1, unitCost: 0 }])}
                   className="flex items-center gap-1.5 text-sm text-blue-700 font-medium hover:text-blue-800">
@@ -2358,9 +2403,9 @@ export function EventDetailPage({
   const [deletingCsId, setDeletingCsId] = useState<number | null>(null);
 
   // Add criteria set modal state
-  type NewCsForm = { name: string; roundId: number | ''; categoryId: number | null; promotionTopN: number | '' };
+  type NewCsForm = { name: string; roundId: number | ''; applyToAllRounds: boolean; categoryId: number | null; promotionTopN: number | '' };
   const [addingCs, setAddingCs] = useState(false);
-  const [newCsForm, setNewCsForm] = useState<NewCsForm>({ name: '', roundId: '', categoryId: null, promotionTopN: '' });
+  const [newCsForm, setNewCsForm] = useState<NewCsForm>({ name: '', roundId: '', applyToAllRounds: false, categoryId: null, promotionTopN: '' });
   const [newCsCriteria, setNewCsCriteria] = useState<CriterionForm[]>([
     { name: '', description: '', maxScore: 10, weight: 100, active: true },
   ]);
@@ -2490,28 +2535,45 @@ export function EventDetailPage({
 
   const handleCreateCs = async () => {
     if (!newCsForm.name.trim()) { toast.error('Tên không được trống'); return; }
-    if (newCsForm.roundId === '') { toast.error('Vui lòng chọn vòng'); return; }
+    if (!newCsForm.applyToAllRounds && newCsForm.roundId === '') { toast.error('Vui lòng chọn vòng (hoặc tick "Áp cho tất cả")'); return; }
+    if (newCsForm.applyToAllRounds && rounds.length === 0) { toast.error('Event chưa có vòng nào'); return; }
     const activeCriteria = newCsCriteria.filter(c => c.active);
     if (activeCriteria.length === 0) { toast.error('Cần ít nhất 1 criterion'); return; }
     const totalW = activeCriteria.reduce((s, c) => s + (Number(c.weight) || 0), 0);
     if (totalW !== 100) { toast.error(`Tổng weight phải = 100%. Hiện tại: ${totalW}%`); return; }
     setSavingCs(true);
     try {
-      const created = await createCriteriaSet(eventId, {
+      const payload = {
         name: newCsForm.name.trim(),
-        roundId: newCsForm.roundId as number,
         categoryId: newCsForm.categoryId ?? undefined,
         promotionTopN: newCsForm.promotionTopN !== '' ? Number(newCsForm.promotionTopN) : undefined,
         criteria: activeCriteria.map((c, idx) => ({
           name: c.name, description: c.description || undefined,
           maxScore: Number(c.maxScore) || 10, weight: Number(c.weight) || 0, displayOrder: idx + 1,
         })),
-      });
-      setCriteriaSets(prev => [...prev, created]);
+      };
+      if (newCsForm.applyToAllRounds) {
+        const results: CriteriaSet[] = [];
+        let skipped = 0;
+        for (const r of rounds) {
+          try {
+            const created = await createCriteriaSet(eventId, { ...payload, roundId: r.id });
+            results.push(created);
+          } catch {
+            skipped++;
+          }
+        }
+        setCriteriaSets(prev => [...prev, ...results]);
+        if (skipped > 0) toast.warning(`${skipped} vòng đã có bộ trùng — bỏ qua`);
+        toast.success(`Đã tạo bộ tiêu chí cho ${results.length} vòng`);
+      } else {
+        const created = await createCriteriaSet(eventId, { ...payload, roundId: newCsForm.roundId as number });
+        setCriteriaSets(prev => [...prev, created]);
+        toast.success('Đã tạo criteria set');
+      }
       setAddingCs(false);
-      setNewCsForm({ name: '', roundId: '', categoryId: null, promotionTopN: '' });
+      setNewCsForm({ name: '', roundId: '', applyToAllRounds: false, categoryId: null, promotionTopN: '' });
       setNewCsCriteria([{ name: '', description: '', maxScore: 10, weight: 100, active: true }]);
-      toast.success('Đã tạo criteria set');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Tạo thất bại');
     } finally {
@@ -3224,12 +3286,26 @@ export function EventDetailPage({
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Vòng áp dụng <span className="text-red-500">*</span></label>
-                <select value={newCsForm.roundId} onChange={e => setNewCsForm(p => ({ ...p, roundId: e.target.value === '' ? '' : Number(e.target.value) }))}
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 bg-white">
-                  <option value="">-- Chọn vòng --</option>
-                  {rounds.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                </select>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-semibold text-slate-600">Vòng áp dụng {!newCsForm.applyToAllRounds && <span className="text-red-500">*</span>}</label>
+                  <label className="flex items-center gap-1 cursor-pointer select-none">
+                    <input type="checkbox" checked={newCsForm.applyToAllRounds}
+                      onChange={e => setNewCsForm(p => ({ ...p, applyToAllRounds: e.target.checked, roundId: '' }))}
+                      className="rounded border-slate-300" />
+                    <span className="text-[10px] text-slate-600 font-medium">Áp cho tất cả các vòng</span>
+                  </label>
+                </div>
+                {newCsForm.applyToAllRounds ? (
+                  <div className="w-full border border-emerald-200 bg-emerald-50 rounded-lg px-3 py-2 text-xs text-emerald-700 font-medium">
+                    Sẽ tạo 1 bộ cho mỗi vòng ({rounds.length > 0 ? rounds.map(r => r.name).join(', ') : 'chưa có vòng'})
+                  </div>
+                ) : (
+                  <select value={newCsForm.roundId} onChange={e => setNewCsForm(p => ({ ...p, roundId: e.target.value === '' ? '' : Number(e.target.value) }))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 bg-white">
+                    <option value="">-- Chọn vòng --</option>
+                    {rounds.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                  </select>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Hạng mục</label>
