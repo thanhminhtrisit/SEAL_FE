@@ -28,17 +28,21 @@ import {
   getEventRounds,
   getEventCategories,
   getEventCriteriaSets,
-  updateCriteriaSet,
+  patchCriteriaSet,
+  replaceCriteria,
   deleteCriteriaSet,
+  updateRound,
   deleteRound,
+  updateCategory,
   deleteCategory,
-  getBudgetItems,
-  patchBudgetItem,
+  getBudget,
+  updateBudgetItem,
   deleteBudgetItem,
   type EventSummary,
   type EventRound,
   type EventCategory,
   type CriteriaSet,
+  type BudgetResponse,
   type BudgetItem,
   type EventType,
 } from '../../api/events';
@@ -459,7 +463,7 @@ export function CreateEventWizard({
             orderNumber: i + 1,
             submissionDeadline: toDateTime(r.submissionDeadline, true),
             promotionTopN: typeof r.promotionTopN === 'number' ? r.promotionTopN : undefined,
-            isFinalRound: r.isFinalRound,
+            finalRound: r.isFinalRound,
           }));
         }
         setRoundIds(saved.map(r => r.id));
@@ -1424,7 +1428,7 @@ export function JudgeAssignment() {
 
 type TeamStatusFilter = 'all' | 'pending' | 'approved' | 'rejected';
 
-const TEAM_PENDING_STATUSES = new Set(['ACTIVE', 'PENDING', 'REGISTERED']);
+const TEAM_PENDING_STATUSES = new Set(['ACTIVE', 'REGISTERED']);
 
 export function TeamManagement() {
   const [events, setEvents] = useState<EventSummary[]>([]);
@@ -2138,7 +2142,7 @@ export function EventDetailPage({
   const [rounds, setRounds] = useState<EventRound[]>([]);
   const [categories, setCategories] = useState<EventCategory[]>([]);
   const [criteriaSets, setCriteriaSets] = useState<CriteriaSet[]>([]);
-  const [budgetItems, setBudgetItems] = useState<BudgetItem[]>([]);
+  const [budget, setBudget] = useState<BudgetResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -2186,14 +2190,14 @@ export function EventDetailPage({
         toast.error(err instanceof Error ? err.message : 'Không tải được criteria sets');
         return [] as CriteriaSet[];
       }),
-      getBudgetItems(eventId).catch(() => [] as BudgetItem[]),
+      getBudget(eventId).catch(() => null as BudgetResponse | null),
     ])
-      .then(([ev, r, c, cs, bi]) => {
+      .then(([ev, r, c, cs, bg]) => {
         setEvent(ev);
         setRounds(safeArray(r));
         setCategories(safeArray(c));
         setCriteriaSets(safeArray(cs).map(set => ({ ...set, criteria: safeArray(set.criteria) })));
-        setBudgetItems(safeArray(bi));
+        setBudget(bg);
       })
       .catch(err => {
         const message = err instanceof Error ? err.message : 'Không tải được event';
@@ -2237,11 +2241,14 @@ export function EventDetailPage({
 
   const handleSaveRound = async () => {
     if (!editingRound || !editRoundName.trim()) return;
-    // PUT /api/events/{id}/rounds/{roundId} — reuse createRound for now if BE lacks PATCH;
-    // optimistic update only since BE endpoint may not exist yet
-    setRounds(prev => prev.map(r => r.id === editingRound.id ? { ...r, name: editRoundName } : r));
-    setEditingRound(null);
-    toast.success('Đã cập nhật tên round');
+    try {
+      const updated = await updateRound(eventId, editingRound.id, { name: editRoundName.trim() });
+      setRounds(prev => prev.map(r => r.id === editingRound.id ? updated : r));
+      setEditingRound(null);
+      toast.success('Đã cập nhật tên round');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Cập nhật round thất bại');
+    }
   };
 
   const handleDeleteCategory = async (categoryId: number) => {
@@ -2259,9 +2266,14 @@ export function EventDetailPage({
 
   const handleSaveCategory = async () => {
     if (!editingCategory || !editCategoryName.trim()) return;
-    setCategories(prev => prev.map(c => c.id === editingCategory.id ? { ...c, name: editCategoryName } : c));
-    setEditingCategory(null);
-    toast.success('Đã cập nhật tên category');
+    try {
+      const updated = await updateCategory(eventId, editingCategory.id, { name: editCategoryName.trim() });
+      setCategories(prev => prev.map(c => c.id === editingCategory.id ? updated : c));
+      setEditingCategory(null);
+      toast.success('Đã cập nhật tên category');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Cập nhật category thất bại');
+    }
   };
 
   const openEditCs = (cs: CriteriaSet) => {
@@ -2279,14 +2291,16 @@ export function EventDetailPage({
     if (!editCsName.trim()) { toast.error('Tên criteria set không được trống'); return; }
     setCsActionLoading(true);
     try {
-      const updated = await updateCriteriaSet(eventId, editingCs.id, {
-        name: editCsName,
+      // PATCH name first, then PUT criteria list
+      const patched = await patchCriteriaSet(eventId, editingCs.id, { name: editCsName.trim() });
+      const withCriteria = await replaceCriteria(eventId, editingCs.id, {
         criteria: editCsCriteria.map((c, idx) => ({
           name: c.name, description: c.description || undefined,
           maxScore: c.maxScore, weight: c.weight, displayOrder: idx + 1,
         })),
       });
-      setCriteriaSets(prev => prev.map(cs => cs.id === editingCs.id ? { ...updated, criteria: safeArray(updated.criteria) } : cs));
+      const merged = { ...patched, criteria: safeArray(withCriteria.criteria) };
+      setCriteriaSets(prev => prev.map(cs => cs.id === editingCs.id ? merged : cs));
       setEditingCs(null);
       toast.success('Đã cập nhật criteria set');
     } catch (err) {
@@ -2312,8 +2326,8 @@ export function EventDetailPage({
   const handleDeleteBudgetItem = async (itemId: number) => {
     setDeletingBudgetItemId(itemId);
     try {
-      await deleteBudgetItem(eventId, itemId);
-      setBudgetItems(prev => prev.filter(i => i.id !== itemId));
+      const updatedBudget = await deleteBudgetItem(eventId, itemId);
+      setBudget(updatedBudget);
       toast.success('Đã xóa mục ngân sách');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Xóa ngân sách thất bại');
@@ -2458,9 +2472,9 @@ export function EventDetailPage({
                   {cat.description && <p className="text-xs text-slate-500 mt-0.5">{cat.description}</p>}
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  {cat.maxTeams != null && (
+                  {cat.mentorName && (
                     <span className="text-xs font-mono bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
-                      max {cat.maxTeams} teams
+                      mentor: {cat.mentorName}
                     </span>
                   )}
                   {canEdit && (
@@ -2557,11 +2571,18 @@ export function EventDetailPage({
       </section>
 
       {/* Budget Items */}
-      {budgetItems.length > 0 && (
+      {budget && safeArray(budget.items).length > 0 && (
         <section className="bg-white rounded-xl shadow-sm border border-slate-200">
           <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
             <DollarSign className="w-4 h-4 text-slate-400" />
-            <h2 className="text-sm font-semibold text-slate-700">Budget Items ({budgetItems.length})</h2>
+            <h2 className="text-sm font-semibold text-slate-700">
+              Budget Items ({safeArray(budget.items).length})
+              {budget.totalEstimatedCost != null && (
+                <span className="ml-2 text-xs font-mono text-slate-500">
+                  — {budget.totalEstimatedCost.toLocaleString()} {budget.currency}
+                </span>
+              )}
+            </h2>
           </div>
           <table className="w-full">
             <thead>
@@ -2572,7 +2593,7 @@ export function EventDetailPage({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {budgetItems.map(item => (
+              {safeArray(budget.items).map((item: BudgetItem) => (
                 <tr key={item.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3 text-sm text-slate-900">{item.description}</td>
                   <td className="px-4 py-3 text-xs font-mono text-slate-600">{item.quantity}</td>
