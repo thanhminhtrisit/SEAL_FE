@@ -2,6 +2,14 @@
 import { apiClient } from './client';
 import { RankingResponse, ApiResponse } from '../app/types';
 
+export interface ScoreBreakdownResponse {
+  judgeName: string;
+  criterionName: string;
+  criterionWeight: number;
+  scoreValue: number;
+  judgeComment?: string | null;
+}
+
 export const ranking = {
   // Lấy danh sách Sự kiện (Events)
   getEvents: async () => {
@@ -47,6 +55,11 @@ export const ranking = {
   getCategoriesByEvent: async (eventId: number) => {
     const response = await apiClient.get(`/api/rankings/events/${eventId}/categories`);
     return response.data.data;
+  },
+
+  getScoreBreakdown: async (teamId: number, roundId: number): Promise<ScoreBreakdownResponse[]> => {
+    const response = await apiClient.get<ApiResponse<ScoreBreakdownResponse[]>>(`/api/rankings/teams/${teamId}/rounds/${roundId}/breakdown`);
+    return response.data.data ?? [];
   },
 
   
