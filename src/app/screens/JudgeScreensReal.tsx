@@ -478,7 +478,14 @@ export function JudgeScoringPage() {
             : item,
         ),
       );
-      setStatusMessage(detail.status === 'SUBMITTED' ? 'Scorecard is submitted and locked' : 'Draft scorecard loaded');
+      const isLocked = detail.status === 'LOCKED' || !!detail.lockedAt;
+      setStatusMessage(
+        isLocked
+          ? 'Locked scorecard loaded'
+          : detail.status === 'SUBMITTED'
+            ? 'Submitted scorecard loaded. You can still edit until it is locked.'
+            : 'Draft scorecard loaded',
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Không mở được scorecard');
     } finally {
@@ -518,13 +525,15 @@ export function JudgeScoringPage() {
     }, 0);
   }, [currentCriteria, draftScores]);
 
-  const canEdit = evaluation?.status === 'DRAFT';
-  const canSubmit = canEdit && currentCriteria.length > 0;
+  const canEdit = !!evaluation && evaluation.status !== 'LOCKED' && !evaluation.lockedAt;
+  const canSubmit = canEdit;
+  const primarySaveLabel = evaluation?.status === 'SUBMITTED' ? 'Save Changes' : 'Save Draft';
+  const submitLabel = evaluation?.status === 'SUBMITTED' ? 'Resubmit Scorecard' : 'Submit Scorecard';
 
   const saveDraft = useCallback(async () => {
     if (!evaluation) return;
     if (!canEdit) {
-      toast.error('Submitted evaluations cannot be edited');
+      toast.error('Locked evaluations cannot be edited');
       return;
     }
 
@@ -561,7 +570,7 @@ export function JudgeScoringPage() {
             : item,
         ),
       );
-      toast.success('Draft saved');
+      toast.success(evaluation.status === 'SUBMITTED' ? 'Changes saved' : 'Draft saved');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Save draft failed');
     } finally {
@@ -572,7 +581,7 @@ export function JudgeScoringPage() {
   const submit = useCallback(async () => {
     if (!evaluation) return;
     if (!canEdit) {
-      toast.error('Submitted evaluations cannot be changed');
+      toast.error('Locked evaluations cannot be changed');
       return;
     }
 
@@ -613,7 +622,7 @@ export function JudgeScoringPage() {
         ),
       );
       toast.success('Evaluation submitted');
-      setStatusMessage('Scorecard submitted and locked');
+      setStatusMessage('Scorecard submitted. You can still edit until it is locked.');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Submit failed');
     } finally {
@@ -712,8 +721,30 @@ export function JudgeScoringPage() {
                     </div>
                     <div>
                       <p className="text-xs text-slate-500">Demo / Slides</p>
-                      <p className="text-slate-700 break-all">{evaluation.demoUrl ?? selectedSubmission.demoUrl ?? '—'}</p>
-                      <p className="text-slate-700 break-all">{evaluation.slideUrl ?? selectedSubmission.slideUrl ?? '—'}</p>
+                      {evaluation.demoUrl ?? selectedSubmission.demoUrl ? (
+                        <a
+                          href={evaluation.demoUrl ?? selectedSubmission.demoUrl ?? '#'}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-cyan-700 hover:underline break-all"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" /> {evaluation.demoUrl ?? selectedSubmission.demoUrl}
+                        </a>
+                      ) : (
+                        <p className="text-slate-700 break-all">—</p>
+                      )}
+                      {evaluation.slideUrl ?? selectedSubmission.slideUrl ? (
+                        <a
+                          href={evaluation.slideUrl ?? selectedSubmission.slideUrl ?? '#'}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-purple-700 hover:underline break-all mt-1"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" /> {evaluation.slideUrl ?? selectedSubmission.slideUrl}
+                        </a>
+                      ) : (
+                        <p className="text-slate-700 break-all mt-1">—</p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -799,10 +830,10 @@ export function JudgeScoringPage() {
                   />
                 </div>
 
-                {!canSubmit && (
+                {!canEdit && (
                   <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5">
                     <AlertTriangle className="w-4 h-4 text-amber-600" />
-                    <p className="text-sm text-amber-700">Submitted evaluations are immutable.</p>
+                    <p className="text-sm text-amber-700">Locked evaluations are immutable.</p>
                   </div>
                 )}
 
@@ -812,14 +843,14 @@ export function JudgeScoringPage() {
                     disabled={!canEdit || saving || loadingEvaluation}
                     className="flex items-center gap-2 border border-slate-200 text-slate-600 text-sm font-medium px-5 py-2.5 rounded-xl hover:bg-slate-50 transition-colors disabled:opacity-50"
                   >
-                    <Save className="w-4 h-4" /> {saving ? 'Saving...' : 'Save Draft'}
+                    <Save className="w-4 h-4" /> {saving ? 'Saving...' : primarySaveLabel}
                   </button>
                   <button
                     onClick={() => void submit()}
                     disabled={!canSubmit || submitting || loadingEvaluation}
                     className="flex items-center gap-2 bg-blue-800 hover:bg-blue-900 text-white text-sm font-semibold px-6 py-2.5 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <Send className="w-4 h-4" /> {submitting ? 'Submitting...' : 'Submit Scorecard'}
+                    <Send className="w-4 h-4" /> {submitting ? 'Submitting...' : submitLabel}
                   </button>
                 </div>
               </div>

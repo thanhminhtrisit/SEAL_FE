@@ -11,7 +11,6 @@ import {
   getCurrentSubmission,
   getSubmissionDetail,
   getSubmissionHistory,
-  pingSubmissionModule,
   submitSubmission,
   type CreateSubmissionRequest,
   type SubmissionMyOverview,
@@ -28,6 +27,8 @@ import {
   createTeam, getTeam, sendInvitation, getMyInvitations, acceptInvitation, declineInvitation,
   type TeamDetail as TeamData, type Invitation,
 } from '../../api/teams';
+import { ranking, type ScoreBreakdownResponse } from '../../api/ranking';
+import type { RankingResponse } from '../types';
 
 function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: React.ReactNode }) {
   return (
@@ -100,14 +101,63 @@ const publishedResults = {
 };
 
 export function ParticipantDashboard({ onNavigate }: { onNavigate: (s: string) => void }) {
+  const [overview, setOverview] = useState<SubmissionMyOverview | null>(null);
+  const [invitationCount, setInvitationCount] = useState<number | null>(null);
   const unread = notifications.filter(n => !n.read).length;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const [overviewData, invitations] = await Promise.all([
+          getMySubmissionOverview(),
+          getMyInvitations().catch(() => [] as Invitation[]),
+        ]);
+        if (cancelled) return;
+        setOverview(overviewData);
+        setInvitationCount(safeArray(invitations).length);
+      } catch {
+        if (!cancelled) {
+          setOverview({ teams: [] });
+          setInvitationCount(0);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const primaryTeam = useMemo(
+    () => safeArray(overview?.teams).find(team => team.memberRole === 'LEADER')
+      ?? safeArray(overview?.teams)[0]
+      ?? null,
+    [overview],
+  );
+
+  const latestSubmission = useMemo(() => {
+    return safeArray(overview?.teams)
+      .flatMap(team => safeArray(team.rounds)
+        .filter(round => !!round.submission)
+        .map(round => ({
+          roundName: round.roundName,
+          submission: round.submission!,
+        })))
+      .sort((left, right) => {
+        const leftTime = left.submission.submittedAt ? new Date(left.submission.submittedAt).getTime() : 0;
+        const rightTime = right.submission.submittedAt ? new Date(right.submission.submittedAt).getTime() : 0;
+        return rightTime - leftTime || right.submission.attemptNumber - left.submission.attemptNumber;
+      })[0] ?? null;
+  }, [overview]);
   return (
     <div className="p-7 space-y-7">
       <PageHeader title="My Dashboard" subtitle="Participant Dashboard" />
       <div className="grid grid-cols-4 gap-5">
-        <KPICard title="My Team" value="—" subtitle="View My Team" icon={Users} accent="blue" />
-        <KPICard title="Invitations" value="?" subtitle="Check My Invitations" icon={Inbox} accent="cyan" />
-        <KPICard title="Submission" value="—" subtitle="Submit Project" icon={Send} accent="green" />
+        <KPICard title="My Team" value={primaryTeam?.teamName ?? '-'} subtitle={primaryTeam?.categoryName ?? 'View My Team'} icon={Users} accent="blue" />
+        <KPICard title="Invitations" value={invitationCount ?? '...'} subtitle="Check My Invitations" icon={Inbox} accent="cyan" />
+        <KPICard title="Submission" value={latestSubmission ? `v${latestSubmission.submission.attemptNumber}` : '-'} subtitle={latestSubmission?.roundName ?? 'Submit Project'} icon={Send} accent="green" />
         <KPICard title="Notifications" value={unread} subtitle="Unread" icon={Bell} accent="amber" />
       </div>
 
@@ -148,7 +198,7 @@ export function ParticipantDashboard({ onNavigate }: { onNavigate: (s: string) =
   );
 }
 
-// ── My Team (wired) ──────────────────────────────────────────────────────────
+// â”€â”€ My Team (wired) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export function TeamDetail({ onNavigate }: { onNavigate: (s: string) => void }) {
   const { userId } = useAuth();
 
@@ -300,12 +350,12 @@ export function TeamDetail({ onNavigate }: { onNavigate: (s: string) => void }) 
     return (
       <div className="flex items-center justify-center py-24 text-slate-400">
         <RefreshCw className="w-5 h-5 animate-spin mr-2" />
-        <span className="text-sm">Đang tải thông tin team…</span>
+        <span className="text-sm">Đang tải thông tin team...</span>
       </div>
     );
   }
 
-  // Has team — show detail
+  // Has team - show detail
   if (team) {
     const leader = teamMembers.find(m => m.role === 'LEADER');
     const members = teamMembers.filter(m => m.role === 'MEMBER');
@@ -410,7 +460,7 @@ export function TeamDetail({ onNavigate }: { onNavigate: (s: string) => void }) 
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
               <h4 className="text-sm font-semibold text-slate-900 mb-3">Team Rules</h4>
               <ul className="space-y-2 text-xs text-slate-600">
-                <li className="flex items-start gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-0.5" /> 3–5 members required</li>
+                <li className="flex items-start gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-0.5" /> 3-5 members required</li>
                 <li className="flex items-start gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-0.5" /> One category per event</li>
                 <li className="flex items-start gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-0.5" /> Repository URL required for submission</li>
                 <li className="flex items-start gap-2"><Info className="w-3.5 h-3.5 text-blue-500 flex-shrink-0 mt-0.5" /> Demo & slide links optional</li>
@@ -439,7 +489,7 @@ export function TeamDetail({ onNavigate }: { onNavigate: (s: string) => void }) 
     );
   }
 
-  // No team — show create form
+  // No team - show create form
   return (
     <div className="p-7 space-y-5">
       <PageHeader title="My Team" subtitle="Bạn chưa có team. Tạo team mới hoặc chờ lời mời." />
@@ -451,14 +501,14 @@ export function TeamDetail({ onNavigate }: { onNavigate: (s: string) => void }) 
               <Users className="w-5 h-5 text-blue-700" />
             </div>
             <div>
-              <h2 className="font-bold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>Tạo Team Mới</h2>
+              <h2 className="font-bold text-slate-900" style={{ fontFamily: "var(--font-display)" }}>Tạo Team Mới</h2>
               <p className="text-xs text-slate-500">Bạn sẽ là Team Leader</p>
             </div>
           </div>
 
           {loadingMeta ? (
             <div className="flex items-center gap-2 text-slate-400 text-sm py-4">
-              <RefreshCw className="w-4 h-4 animate-spin" /> Đang tải danh sách event…
+              <RefreshCw className="w-4 h-4 animate-spin" /> Đang tải danh sách event...
             </div>
           ) : (
             <>
@@ -484,7 +534,7 @@ export function TeamDetail({ onNavigate }: { onNavigate: (s: string) => void }) 
                   disabled={selectedEventId === '' || categories.length === 0}
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50"
                 >
-                  <option value="">{selectedEventId === '' ? '— Chọn event trước —' : categories.length === 0 ? 'Không có category' : '— Chọn category —'}</option>
+                  <option value="">{selectedEventId === "" ? "— Chọn event trước —" : categories.length === 0 ? "Không có category" : "— Chọn category —"}</option>
                   {categories.map(cat => (
                     <option key={cat.id} value={cat.id}>{cat.name}</option>
                   ))}
@@ -507,7 +557,7 @@ export function TeamDetail({ onNavigate }: { onNavigate: (s: string) => void }) 
                   value={teamDescription}
                   onChange={e => setTeamDescription(e.target.value)}
                   rows={2}
-                  placeholder="Mô tả ngắn về team và dự án…"
+                  placeholder="Mô tả ngắn về team và dự án..."
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-700"
                 />
               </div>
@@ -539,7 +589,7 @@ export function TeamDetail({ onNavigate }: { onNavigate: (s: string) => void }) 
   );
 }
 
-// ── My Invitations ───────────────────────────────────────────────────────────
+// My Invitations
 export function MyInvitationsPage() {
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -591,7 +641,7 @@ export function MyInvitationsPage() {
     <div className="p-7 space-y-5">
       <PageHeader
         title="My Invitations"
-        subtitle="Lời mời tham gia team đang chờ phản hồi"
+        subtitle={'L\u1eddi m\u1eddi tham gia team \u0111ang ch\u1edd ph\u1ea3n h\u1ed3i'}
         actions={
           <button onClick={load} disabled={loading} className="flex items-center gap-1.5 border border-slate-200 text-slate-600 text-sm px-3 py-2 rounded-lg hover:bg-slate-50 disabled:opacity-50">
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
@@ -602,15 +652,15 @@ export function MyInvitationsPage() {
       {loading && (
         <div className="flex items-center justify-center py-20 text-slate-400">
           <RefreshCw className="w-5 h-5 animate-spin mr-2" />
-          <span className="text-sm">Đang tải lời mời…</span>
+          <span className="text-sm">{'\u0110ang t\u1ea3i l\u1eddi m\u1eddi...'}</span>
         </div>
       )}
 
       {!loading && invitations.length === 0 && (
         <div className="flex flex-col items-center py-20 gap-3 text-slate-400">
           <Inbox className="w-10 h-10 text-slate-300" />
-          <p className="text-sm font-medium text-slate-600">Không có lời mời nào</p>
-          <p className="text-xs">Khi được mời vào team, lời mời sẽ hiển thị ở đây.</p>
+          <p className="text-sm font-medium text-slate-600">{'Kh\u00f4ng c\u00f3 l\u1eddi m\u1eddi n\u00e0o'}</p>
+          <p className="text-xs">{'Khi \u0111\u01b0\u1ee3c m\u1eddi v\u00e0o team, l\u1eddi m\u1eddi s\u1ebd hi\u1ec3n th\u1ecb \u1edf \u0111\u00e2y.'}</p>
         </div>
       )}
 
@@ -625,9 +675,9 @@ export function MyInvitationsPage() {
                 </div>
                 <p className="text-xs text-slate-600">{inv.eventName}</p>
                 <div className="flex items-center gap-3 mt-1.5 text-xs text-slate-400">
-                  <span>Được mời bởi <span className="font-medium text-slate-600">{inv.invitedByName}</span></span>
-                  <span>·</span>
-                  <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> Hết hạn {fmtDate(inv.expiresAt)}</span>
+                  <span>{'\u0110\u01b0\u1ee3c m\u1eddi b\u1edfi '}<span className="font-medium text-slate-600">{inv.invitedByName}</span></span>
+                  <span>{'·'}</span>
+                  <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {'H\u1ebft h\u1ea1n '}{fmtDate(inv.expiresAt)}</span>
                 </div>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
@@ -675,8 +725,6 @@ export function SubmitProject() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [actionLoading, setActionLoading] = useState<'submit' | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [backendStatus, setBackendStatus] = useState<'loading' | 'ok' | 'error'>('loading');
-  const [backendMessage, setBackendMessage] = useState('Checking backend connection...');
   const [showFallback, setShowFallback] = useState(false);
 
   const selectedTeam = useMemo(
@@ -803,18 +851,6 @@ export function SubmitProject() {
   }, []);
 
   useEffect(() => {
-    const checkBackend = async () => {
-      try {
-        const message = await pingSubmissionModule();
-        setBackendStatus('ok');
-        setBackendMessage(message);
-      } catch (err) {
-        setBackendStatus('error');
-        setBackendMessage(err instanceof Error ? err.message : 'Backend unavailable');
-      }
-    };
-
-    void checkBackend();
     void loadOverview();
   }, [loadOverview]);
 
@@ -946,14 +982,6 @@ export function SubmitProject() {
         }
       />
 
-      <div className={`rounded-xl border p-4 flex items-start gap-3 ${backendStatus === 'ok' ? 'bg-emerald-50 border-emerald-200' : backendStatus === 'error' ? 'bg-rose-50 border-rose-200' : 'bg-slate-50 border-slate-200'}`}>
-        <div className={`mt-0.5 w-2.5 h-2.5 rounded-full ${backendStatus === 'ok' ? 'bg-emerald-500' : backendStatus === 'error' ? 'bg-rose-500' : 'bg-slate-400'}`} />
-        <div>
-          <p className={`text-sm font-semibold ${backendStatus === 'ok' ? 'text-emerald-800' : backendStatus === 'error' ? 'text-rose-800' : 'text-slate-800'}`}>Backend connection</p>
-          <p className={`text-sm mt-0.5 ${backendStatus === 'ok' ? 'text-emerald-700' : backendStatus === 'error' ? 'text-rose-700' : 'text-slate-600'}`}>{backendMessage}</p>
-        </div>
-      </div>
-
       {error && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
           <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
@@ -972,7 +1000,7 @@ export function SubmitProject() {
                 <h3 className="font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>My Teams</h3>
                 <p className="text-sm text-slate-500">Pick a team to see all rounds and submission states</p>
               </div>
-              <span className="text-xs text-slate-500">{auth.role ?? 'PUBLIC'}</span>
+              <span className="text-xs text-slate-500">{auth.role ?? "PUBLIC"}</span>
             </div>
             {loadingOverview ? (
               <p className="text-sm text-slate-500">Loading team overview...</p>
@@ -1043,7 +1071,7 @@ export function SubmitProject() {
                             <span className="text-[11px] font-medium text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full">Order {round.orderNumber}</span>
                           </div>
                           <p className="text-sm text-slate-500 mt-1">
-                            Status: {round.status} • Deadline: {round.submissionDeadline ?? '-'}
+                            Status: {round.status} • Deadline: {round.submissionDeadline ?? "-"}
                           </p>
                           <p className="text-sm mt-2">
                             {roundDeadlinePassed && round.submissionDeadline ? (
@@ -1058,7 +1086,7 @@ export function SubmitProject() {
                                 </span>
                                 <span className="ml-2 text-xs text-slate-500">
                                   Latest Submission: Attempt #{round.submission.attemptNumber}
-                                  {round.submission.submittedAt ? ` • submitted ${round.submission.submittedAt}` : ''}
+                                  {round.submission.submittedAt ? ` • submitted ${round.submission.submittedAt}` : ""}
                                 </span>
                               </>
                             ) : (
@@ -1281,7 +1309,7 @@ export function SubmitProject() {
                               <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded ${attempt.submissionId === latestSubmission?.submissionId ? 'bg-blue-800 text-white' : 'bg-slate-100 text-slate-600'}`}>Attempt #{attempt.attemptNumber}</span>
                               <span className="text-xs text-slate-600 font-medium">{attempt.status}</span>
                             </div>
-                            <span className="text-xs font-mono text-slate-400">{attempt.submittedAt ?? attempt.lastUpdatedAt ?? '-'}</span>
+                            <span className="text-xs font-mono text-slate-400">{attempt.submittedAt ?? attempt.lastUpdatedAt ?? "-"}</span>
                           </div>
                           <p className="text-xs text-slate-600 mb-2">{attempt.changeNote || 'No change note'}</p>
                           <div className="grid grid-cols-2 gap-2 text-xs">
@@ -1352,86 +1380,245 @@ export function SubmitProject() {
 function SubmitProjectMock() {
   return (
     <div className="p-7 space-y-5">
-      <PageHeader title="Project Submission" subtitle="Preliminary Round � Deadline: 2026-07-25 23:59" />
+      <PageHeader title="Project Submission" subtitle="Preliminary Round — Deadline: 2026-07-25 23:59" />
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 text-sm text-slate-600">
         This mock submission screen is not used in the active flow.
       </div>
     </div>
   );
 }
+type ResultBreakdownRow = {
+  name: string;
+  weight: number;
+  score: number;
+  weighted: number;
+};
+
+function ordinalLabel(rank: number): string {
+  if (rank % 100 >= 11 && rank % 100 <= 13) return `${rank}th Place`;
+  switch (rank % 10) {
+    case 1: return `${rank}st Place`;
+    case 2: return `${rank}nd Place`;
+    case 3: return `${rank}rd Place`;
+    default: return `${rank}th Place`;
+  }
+}
+
+function aggregateBreakdown(rows: ScoreBreakdownResponse[]): ResultBreakdownRow[] {
+  const grouped = new Map<string, { name: string; weight: number; total: number; count: number }>();
+
+  rows.forEach(row => {
+    const key = `${row.criterionName}::${row.criterionWeight}`;
+    const current = grouped.get(key) ?? {
+      name: row.criterionName,
+      weight: Number(row.criterionWeight ?? 0),
+      total: 0,
+      count: 0,
+    };
+    current.total += Number(row.scoreValue ?? 0);
+    current.count += 1;
+    grouped.set(key, current);
+  });
+
+  return Array.from(grouped.values())
+    .map(item => {
+      const averageScore = item.count > 0 ? item.total / item.count : 0;
+      return {
+        name: item.name,
+        weight: item.weight,
+        score: averageScore,
+        weighted: (averageScore / 10) * item.weight,
+      };
+    })
+    .sort((left, right) => right.weight - left.weight);
+}
+
 export function ViewResults() {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedTeam, setSelectedTeam] = useState<SubmissionMyOverviewTeam | null>(null);
+  const [selectedRound, setSelectedRound] = useState<SubmissionMyOverviewRound | null>(null);
+  const [selectedRanking, setSelectedRanking] = useState<RankingResponse | null>(null);
+  const [breakdown, setBreakdown] = useState<ResultBreakdownRow[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const overview = await getMySubmissionOverview();
+        const teams = safeArray(overview.teams);
+        const orderedTeams = [
+          ...teams.filter(team => team.memberRole === 'LEADER'),
+          ...teams.filter(team => team.memberRole !== 'LEADER'),
+        ];
+
+        let matchedTeam: SubmissionMyOverviewTeam | null = null;
+        let matchedRound: SubmissionMyOverviewRound | null = null;
+        let matchedRanking: RankingResponse | null = null;
+
+        for (const team of orderedTeams) {
+          const orderedRounds = [...safeArray(team.rounds)].sort((left, right) => right.orderNumber - left.orderNumber);
+          for (const round of orderedRounds) {
+            const rankings = await ranking.getRankings(round.roundId);
+            const foundRanking = safeArray(rankings).find(item => item.teamId === team.teamId) ?? null;
+            if (foundRanking) {
+              matchedTeam = team;
+              matchedRound = round;
+              matchedRanking = foundRanking;
+              break;
+            }
+          }
+          if (matchedRanking) break;
+        }
+
+        if (!matchedTeam || !matchedRound || !matchedRanking) {
+          if (!cancelled) {
+            setSelectedTeam(null);
+            setSelectedRound(null);
+            setSelectedRanking(null);
+            setBreakdown([]);
+          }
+          return;
+        }
+
+        const breakdownRows = await ranking.getScoreBreakdown(matchedTeam.teamId, matchedRound.roundId).catch(() => [] as ScoreBreakdownResponse[]);
+
+        if (!cancelled) {
+          setSelectedTeam(matchedTeam);
+          setSelectedRound(matchedRound);
+          setSelectedRanking(matchedRanking);
+          setBreakdown(aggregateBreakdown(breakdownRows));
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Failed to load published results');
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="p-7 space-y-5">
+        <PageHeader title="Published Results" subtitle="Loading published ranking data..." />
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 text-sm text-slate-500">
+          Loading results...
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-7 space-y-5">
+        <PageHeader title="Published Results" subtitle="Unable to load results" />
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
+          {error}
+        </div>
+      </div>
+    );
+  }
+
+  if (!selectedTeam || !selectedRound || !selectedRanking) {
+    return (
+      <div className="p-7 space-y-5">
+        <PageHeader title="Published Results" subtitle="No published ranking found for your current teams" />
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 text-sm text-slate-500">
+          Rankings have not been published yet for the teams linked to this account.
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-7 space-y-5">
-      <PageHeader title="Published Results" subtitle="Preliminary Round — SEAL Hackathon Summer 2026" />
+      <PageHeader title="Published Results" subtitle={`${selectedRound.roundName} — ${selectedTeam.eventName}`} />
 
       <div className="bg-gradient-to-br from-blue-900 to-blue-700 rounded-2xl p-7 text-white">
         <div className="flex items-start justify-between">
           <div>
-            <p className="text-blue-200 text-sm mb-1">Code Seals — Web Application</p>
+            <p className="text-blue-200 text-sm mb-1">{selectedTeam.teamName} — {selectedTeam.categoryName}</p>
             <div className="flex items-center gap-3 mb-2">
               <div className="w-12 h-12 bg-yellow-400 rounded-full flex items-center justify-center">
-                <span className="text-yellow-900 font-bold text-xl">1</span>
+                <span className="text-yellow-900 font-bold text-xl">{selectedRanking.rankPosition}</span>
               </div>
               <div>
-                <p className="text-3xl font-bold" style={{ fontFamily: 'var(--font-display)' }}>1st Place</p>
-                <p className="text-blue-200 text-sm">Preliminary Round Ranking</p>
+                <p className="text-3xl font-bold" style={{ fontFamily: 'var(--font-display)' }}>{ordinalLabel(selectedRanking.rankPosition)}</p>
+                <p className="text-blue-200 text-sm">{selectedRound.roundName} Ranking</p>
               </div>
             </div>
           </div>
           <div className="text-right">
             <p className="text-blue-200 text-sm">Weighted Score</p>
-            <p className="text-4xl font-bold font-mono">{publishedResults.totalScore}</p>
-            <p className="text-blue-300 text-sm">/ 10.00</p>
+            <p className="text-4xl font-bold font-mono">{selectedRanking.totalScore.toFixed(2)}</p>
+            <p className="text-blue-300 text-sm">/ 100.00</p>
           </div>
         </div>
         <div className="flex items-center gap-3 mt-4 pt-4 border-t border-white/20">
-          <span className="flex items-center gap-1.5 bg-emerald-500 text-white text-xs font-semibold px-3 py-1.5 rounded-full">
-            <CheckCircle2 className="w-3.5 h-3.5" /> Promoted to Final Round
-          </span>
-          <span className="flex items-center gap-1.5 bg-yellow-400 text-yellow-900 text-xs font-semibold px-3 py-1.5 rounded-full">
-            <Award className="w-3.5 h-3.5" /> 1st Place Award — 15,000,000 VND
+          {selectedRanking.isPromoted && (
+            <span className="flex items-center gap-1.5 bg-emerald-500 text-white text-xs font-semibold px-3 py-1.5 rounded-full">
+              <CheckCircle2 className="w-3.5 h-3.5" /> Promoted to next round
+            </span>
+          )}
+          <span className="flex items-center gap-1.5 bg-white/15 text-white text-xs font-semibold px-3 py-1.5 rounded-full">
+            <Award className="w-3.5 h-3.5" /> Rank #{selectedRanking.rankPosition}
           </span>
         </div>
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
         <h3 className="font-semibold text-slate-900 mb-4" style={{ fontFamily: 'var(--font-display)' }}>Score Breakdown by Criterion</h3>
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-slate-200">
-              {['Criterion', 'Weight', 'Raw Score / 10', 'Weighted Score', 'Bar'].map(c => (
-                <th key={c} className="text-left px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {publishedResults.criteriaBreakdown.map(c => (
-              <tr key={c.name} className="hover:bg-slate-50">
-                <td className="px-3 py-3 text-sm font-medium text-slate-900">{c.name}</td>
-                <td className="px-3 py-3 text-sm font-mono text-slate-600">{c.weight}%</td>
-                <td className="px-3 py-3 text-sm font-mono font-bold text-blue-800">{c.score}</td>
-                <td className="px-3 py-3 text-sm font-mono text-emerald-700">{c.weighted.toFixed(2)}</td>
-                <td className="px-3 py-3">
-                  <div className="w-32 h-2 bg-slate-100 rounded-full">
-                    <div className="h-2 bg-blue-700 rounded-full" style={{ width: `${(c.score / 10) * 100}%` }} />
-                  </div>
-                </td>
+        {breakdown.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+            No criterion breakdown is available yet for this published result.
+          </div>
+        ) : (
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-slate-200">
+                {['Criterion', 'Weight', 'Average Score / 10', 'Weighted Contribution', 'Bar'].map(c => (
+                  <th key={c} className="text-left px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr className="border-t-2 border-slate-200 bg-slate-50">
-              <td colSpan={3} className="px-3 py-2.5 text-sm font-bold text-slate-900">Total Weighted Score</td>
-              <td className="px-3 py-2.5 text-sm font-bold text-blue-800 font-mono">{publishedResults.totalScore}</td>
-              <td />
-            </tr>
-          </tfoot>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {breakdown.map(c => (
+                <tr key={c.name} className="hover:bg-slate-50">
+                  <td className="px-3 py-3 text-sm font-medium text-slate-900">{c.name}</td>
+                  <td className="px-3 py-3 text-sm font-mono text-slate-600">{c.weight}%</td>
+                  <td className="px-3 py-3 text-sm font-mono font-bold text-blue-800">{c.score.toFixed(2)}</td>
+                  <td className="px-3 py-3 text-sm font-mono text-emerald-700">{c.weighted.toFixed(2)}</td>
+                  <td className="px-3 py-3">
+                    <div className="w-32 h-2 bg-slate-100 rounded-full">
+                      <div className="h-2 bg-blue-700 rounded-full" style={{ width: `${Math.max(0, Math.min(100, (c.score / 10) * 100))}%` }} />
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-slate-200 bg-slate-50">
+                <td colSpan={3} className="px-3 py-2.5 text-sm font-bold text-slate-900">Total Weighted Score</td>
+                <td className="px-3 py-2.5 text-sm font-bold text-blue-800 font-mono">{selectedRanking.totalScore.toFixed(2)}</td>
+                <td />
+              </tr>
+            </tfoot>
+          </table>
+        )}
       </div>
 
       <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
         <p className="text-xs text-slate-500 flex items-center gap-1.5">
-          <Info className="w-3.5 h-3.5" /> Individual judge scores are not shown per SEAL platform policy. Only the final weighted aggregate is published.
+          <Info className="w-3.5 h-3.5" /> Dashboard and result summary now load from your real team overview and ranking data. Criterion rows are aggregated from the published score breakdown.
         </p>
       </div>
     </div>
