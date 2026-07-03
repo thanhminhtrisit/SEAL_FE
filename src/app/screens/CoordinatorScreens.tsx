@@ -408,14 +408,28 @@ export function CreateEventWizard({
   ]);
   const [categoryIds, setCategoryIds] = useState<number[]>([]);
 
-  // Step 3 – Criteria
-  const [criteria, setCriteria] = useState<CriterionForm[]>([
-    { name: 'Technical Quality', description: 'Code quality, architecture, performance, scalability', maxScore: 10, weight: 40, active: true },
-    { name: 'Innovation', description: 'Originality, creative use of technology, novelty of approach', maxScore: 10, weight: 25, active: true },
-    { name: 'UI/UX Design', description: 'Interface usability, visual design, user experience quality', maxScore: 10, weight: 20, active: true },
-    { name: 'Presentation', description: 'Demo clarity, Q&A responses, communication', maxScore: 10, weight: 15, active: true },
-  ] as CriterionForm[]);
-  const [criteriaSetId, setCriteriaSetId] = useState<number | null>(null);
+  // Step 3 – Criteria (multiple sets, each scoped to a round + optional category)
+  interface WizardCsForm {
+    name: string;
+    roundId: number | '';
+    categoryId: number | null;
+    promotionTopN: number | '';
+    criteria: CriterionForm[];
+  }
+  const defaultWizardCsRow = (): WizardCsForm => ({
+    name: 'Default Criteria Set',
+    roundId: '',
+    categoryId: null,
+    promotionTopN: '',
+    criteria: [
+      { name: 'Technical Quality', description: 'Code quality, architecture, performance, scalability', maxScore: 10, weight: 40, active: true },
+      { name: 'Innovation', description: 'Originality, creative use of technology, novelty of approach', maxScore: 10, weight: 25, active: true },
+      { name: 'UI/UX Design', description: 'Interface usability, visual design, user experience quality', maxScore: 10, weight: 20, active: true },
+      { name: 'Presentation', description: 'Demo clarity, Q&A responses, communication', maxScore: 10, weight: 15, active: true },
+    ],
+  });
+  const [wizardCsSets, setWizardCsSets] = useState<WizardCsForm[]>([defaultWizardCsRow()]);
+  const [wizardCsIds, setWizardCsIds] = useState<(number | null)[]>([null]);
 
   // Step 4 – Budget
   const [budgetId, setBudgetId] = useState<number | null>(null);
@@ -432,7 +446,6 @@ export function CreateEventWizard({
   const filteredTermPlans = allTermPlans.filter(tp => disciplineId !== '' && tp.disciplineId === (disciplineId as number));
   const selectedTermPlan = allTermPlans.find(tp => tp.id === termPlanId);
   const autoEventType = selectedTermPlan?.term as EventType | undefined;
-  const totalWeight = criteria.filter(c => c.active).reduce((s, c) => s + (Number(c.weight) || 0), 0);
   // Only count rows that have both a category and a description — these are the rows actually sent to BE
   const validBudgetItems = budgetItems.filter(i => i.categoryId !== '' && i.description.trim() !== '');
   const skippedBudgetCount = budgetItems.length - validBudgetItems.length;
@@ -510,21 +523,40 @@ export function CreateEventWizard({
           }));
         }
         setCategoryIds(saved.map(c => c.id));
-      } else if (step === 3 && criteriaSetId === null && eventId) {
-        if (totalWeight !== 100) { toast.error(`Tổng weight phải bằng 100%. Hiện tại: ${totalWeight}%`); return; }
-        const active = criteria.filter(c => c.active);
-        if (active.length === 0) { toast.error('Cần ít nhất 1 criterion active'); return; }
-        const cs = await createCriteriaSet(eventId, {
-          name: 'Default Criteria Set',
-          criteria: active.map((c, idx) => ({
-            name: c.name,
-            description: c.description || undefined,
-            maxScore: Number(c.maxScore) || 10,
-            weight: Number(c.weight) || 0,
-            displayOrder: idx + 1,
-          })),
-        });
-        setCriteriaSetId(cs.id);
+      } else if (step === 3 && eventId) {
+        // Validate each set before sending
+        for (let i = 0; i < wizardCsSets.length; i++) {
+          const cs = wizardCsSets[i];
+          if (!cs.name.trim()) { toast.error(`Bộ ${i + 1}: tên không được trống`); return; }
+          if (cs.roundId === '') { toast.error(`Bộ ${i + 1}: vui lòng chọn vòng`); return; }
+          const active = cs.criteria.filter(c => c.active);
+          if (active.length === 0) { toast.error(`Bộ ${i + 1} (${cs.name}): cần ít nhất 1 criterion active`); return; }
+          const tw = active.reduce((s, c) => s + (Number(c.weight) || 0), 0);
+          if (tw !== 100) { toast.error(`Bộ ${i + 1} (${cs.name}): tổng weight phải = 100%. Hiện tại: ${tw}%`); return; }
+        }
+        // Client-side duplicate warning
+        const pairKeys = wizardCsSets.map(cs => `${cs.roundId}|${String(cs.categoryId)}`);
+        if (pairKeys.some((k, i) => pairKeys.indexOf(k) !== i)) {
+          toast.warning('Cảnh báo: có 2+ bộ tiêu chí cùng (vòng, hạng mục)');
+        }
+        // Create only sets not yet saved
+        const newIds = [...wizardCsIds];
+        for (let i = 0; i < wizardCsSets.length; i++) {
+          if (newIds[i] !== null) continue;
+          const cs = wizardCsSets[i];
+          const created = await createCriteriaSet(eventId, {
+            name: cs.name.trim(),
+            roundId: cs.roundId as number,
+            categoryId: cs.categoryId ?? undefined,
+            promotionTopN: cs.promotionTopN !== '' ? Number(cs.promotionTopN) : undefined,
+            criteria: cs.criteria.filter(c => c.active).map((c, idx) => ({
+              name: c.name, description: c.description || undefined,
+              maxScore: Number(c.maxScore) || 10, weight: Number(c.weight) || 0, displayOrder: idx + 1,
+            })),
+          });
+          newIds[i] = created.id;
+        }
+        setWizardCsIds(newIds);
       } else if (step === 4 && budgetId === null && eventId) {
         const budget = await createBudget(eventId, { currency: 'VND' });
         const validItems = budgetItems.filter(i => i.categoryId !== '' && i.description.trim());
@@ -605,7 +637,7 @@ export function CreateEventWizard({
           {step === 0 && eventId && savedBadge(`Đã lưu ID ${eventId}`)}
           {step === 1 && roundIds.length > 0 && savedBadge(`${roundIds.length} rounds đã lưu`)}
           {step === 2 && categoryIds.length > 0 && savedBadge(`${categoryIds.length} categories đã lưu`)}
-          {step === 3 && criteriaSetId && savedBadge('Criteria set đã lưu')}
+          {step === 3 && wizardCsIds.some(id => id !== null) && savedBadge(`${wizardCsIds.filter(id => id !== null).length}/${wizardCsSets.length} bộ tiêu chí đã lưu`)}
           {step === 4 && budgetId && savedBadge('Budget đã lưu')}
         </div>
         <div className="p-6">
@@ -788,48 +820,130 @@ export function CreateEventWizard({
             </div>
           )}
 
-          {/* ── Step 3: Criteria ───────────────────────────────── */}
+          {/* ── Step 3: Criteria (multi-set) ───────────────────── */}
           {step === 3 && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-slate-600">Scoring criteria and weights for all judging. Total weight must equal 100%.</p>
-                <div className={`flex items-center gap-1.5 text-sm font-mono font-bold px-3 py-1 rounded-lg ${totalWeight === 100 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-                  {totalWeight === 100 ? <Check className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
-                  Total: {totalWeight}%
-                </div>
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-slate-500 italic">Cùng một vòng, mỗi hạng mục có thể có bộ tiêu chí, trọng số và Top-N riêng.</p>
+                {wizardCsIds.every(id => id === null) && (
+                  <button onClick={() => { setWizardCsSets(p => [...p, defaultWizardCsRow()]); setWizardCsIds(p => [...p, null]); }}
+                    className="flex items-center gap-1 text-sm text-blue-700 font-medium hover:text-blue-800 flex-shrink-0">
+                    <Plus className="w-4 h-4" /> Thêm bộ tiêu chí
+                  </button>
+                )}
               </div>
-              <table className="w-full">
-                <thead><tr className="border-b border-slate-200">{['Criterion', 'Description', 'Max Score', 'Weight (%)', 'Active'].map(c => <th key={c} className="text-left px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>)}</tr></thead>
-                <tbody className="divide-y divide-slate-100">
-                  {criteria.map((c, i) => (
-                    <tr key={i} className="hover:bg-slate-50">
-                      <td className="px-3 py-2.5">
-                        <input value={c.name} onChange={e => { const copy = [...criteria]; copy[i] = { ...copy[i], name: e.target.value }; setCriteria(copy); }} disabled={!!criteriaSetId}
-                          className="w-full border border-slate-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <input value={c.description} onChange={e => { const copy = [...criteria]; copy[i] = { ...copy[i], description: e.target.value }; setCriteria(copy); }} disabled={!!criteriaSetId}
-                          className="w-full border border-slate-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <input type="number" min={1} max={100} value={c.maxScore === 0 || c.maxScore === '' ? '' : c.maxScore} onChange={e => { const copy = [...criteria]; copy[i] = { ...copy[i], maxScore: parseNumInput(e) }; setCriteria(copy); }} disabled={!!criteriaSetId}
-                          className="w-16 border border-slate-200 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <input type="number" min={0} max={100} value={c.weight === 0 || c.weight === '' ? '' : c.weight} onChange={e => { const copy = [...criteria]; copy[i] = { ...copy[i], weight: parseNumInput(e) }; setCriteria(copy); }} disabled={!!criteriaSetId}
-                          className="w-16 border border-slate-200 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <div className={`w-10 h-5 rounded-full transition-colors ${criteriaSetId ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} ${c.active ? 'bg-blue-700' : 'bg-slate-300'}`}
-                          onClick={() => { if (!criteriaSetId) { const copy = [...criteria]; copy[i] = { ...copy[i], active: !copy[i].active }; setCriteria(copy); } }}>
-                          <div className={`w-4 h-4 bg-white rounded-full m-0.5 transition-transform shadow ${c.active ? 'translate-x-5' : 'translate-x-0'}`} />
+              {wizardCsSets.map((cs, si) => {
+                const saved = wizardCsIds[si] !== null;
+                const tw = cs.criteria.filter(c => c.active).reduce((s, c) => s + (Number(c.weight) || 0), 0);
+                const savedRounds = roundIds.map((id, i) => ({ id, name: rounds[i].name }));
+                const savedCats = categoryIds.map((id, i) => ({ id, name: categories[i].name }));
+                const updateCs = (patch: Partial<WizardCsForm>) => setWizardCsSets(prev => prev.map((x, xi) => xi === si ? { ...x, ...patch } : x));
+                const updateCriterion = (ci: number, patch: Partial<CriterionForm>) => updateCs({ criteria: cs.criteria.map((c, cj) => cj === ci ? { ...c, ...patch } : c) });
+                return (
+                  <div key={si} className={`rounded-lg border p-4 space-y-3 ${saved ? 'border-emerald-300 bg-emerald-50/40' : 'border-slate-200'}`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Bộ {si + 1}</span>
+                        {saved && <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-medium">Đã lưu</span>}
+                      </div>
+                      {!saved && wizardCsSets.length > 1 && (
+                        <button onClick={() => { setWizardCsSets(p => p.filter((_, xi) => xi !== si)); setWizardCsIds(p => p.filter((_, xi) => xi !== si)); }}
+                          className="p-1 text-slate-400 hover:text-red-600 transition-colors"><X className="w-4 h-4" /></button>
+                      )}
+                    </div>
+                    {/* Name + Round + Category + TopN row */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Tên bộ tiêu chí <span className="text-red-500">*</span></label>
+                        <input value={cs.name} onChange={e => updateCs({ name: e.target.value })} disabled={saved}
+                          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Vòng áp dụng <span className="text-red-500">*</span></label>
+                        <select value={cs.roundId} onChange={e => updateCs({ roundId: e.target.value === '' ? '' : Number(e.target.value) })} disabled={saved}
+                          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 bg-white disabled:opacity-50 disabled:bg-slate-50">
+                          <option value="">-- Chọn vòng --</option>
+                          {savedRounds.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                          {savedRounds.length === 0 && <option disabled>Chưa tạo round (hoàn tất bước 1 trước)</option>}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Hạng mục</label>
+                        <select value={cs.categoryId ?? ''} onChange={e => updateCs({ categoryId: e.target.value === '' ? null : Number(e.target.value) })} disabled={saved}
+                          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 bg-white disabled:opacity-50 disabled:bg-slate-50">
+                          <option value="">Dùng chung cả vòng</option>
+                          {savedCats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                        <p className="text-[10px] text-slate-400 mt-0.5">Để trống = áp dụng cho mọi hạng mục trong vòng</p>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Top-N thăng hạng</label>
+                        <input type="number" min={1} value={cs.promotionTopN === '' ? '' : cs.promotionTopN}
+                          onChange={e => updateCs({ promotionTopN: parseNumInput(e) })} disabled={saved}
+                          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
+                        <p className="text-[10px] text-slate-400 mt-0.5">Để trống = theo round.promotionTopN</p>
+                      </div>
+                    </div>
+                    {/* Criteria table */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-xs font-semibold text-slate-600">Tiêu chí chấm điểm</label>
+                        <div className={`flex items-center gap-1 text-xs font-mono font-bold px-2 py-0.5 rounded ${tw === 100 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                          {tw === 100 ? <Check className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
+                          {tw}%
                         </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {totalWeight !== 100 && <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-4 py-2"><AlertTriangle className="w-4 h-4 text-red-600" /><p className="text-sm text-red-700">Total weight is {totalWeight}%. Must equal exactly 100%.</p></div>}
+                      </div>
+                      <table className="w-full border border-slate-200 rounded-lg overflow-hidden">
+                        <thead><tr className="bg-slate-50 border-b border-slate-200">
+                          {['Tên', 'Mô tả', 'Max', 'Weight%', 'Active', ''].map(h => (
+                            <th key={h} className="text-left px-2 py-1.5 text-xs font-semibold text-slate-500">{h}</th>
+                          ))}
+                        </tr></thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {cs.criteria.map((c, ci) => (
+                            <tr key={ci} className={c.active ? 'hover:bg-slate-50' : 'bg-slate-50 opacity-60'}>
+                              <td className="px-2 py-1.5">
+                                <input value={c.name} onChange={e => updateCriterion(ci, { name: e.target.value })} disabled={saved}
+                                  className="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <input value={c.description} onChange={e => updateCriterion(ci, { description: e.target.value })} disabled={saved}
+                                  className="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <input type="number" min={1} value={c.maxScore === '' ? '' : c.maxScore} onChange={e => updateCriterion(ci, { maxScore: parseNumInput(e) })} disabled={saved}
+                                  className="w-14 border border-slate-200 rounded px-2 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <input type="number" min={0} max={100} value={c.weight === '' ? '' : c.weight} onChange={e => updateCriterion(ci, { weight: parseNumInput(e) })} disabled={saved}
+                                  className="w-14 border border-slate-200 rounded px-2 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <div className={`w-8 h-4 rounded-full transition-colors ${saved ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} ${c.active ? 'bg-blue-700' : 'bg-slate-300'}`}
+                                  onClick={() => { if (!saved) updateCriterion(ci, { active: !c.active }); }}>
+                                  <div className={`w-3 h-3 bg-white rounded-full m-0.5 transition-transform shadow ${c.active ? 'translate-x-4' : 'translate-x-0'}`} />
+                                </div>
+                              </td>
+                              <td className="px-2 py-1.5">
+                                {!saved && cs.criteria.length > 1 && (
+                                  <button onClick={() => updateCs({ criteria: cs.criteria.filter((_, cj) => cj !== ci) })}
+                                    className="p-0.5 text-slate-300 hover:text-red-500 transition-colors"><X className="w-3.5 h-3.5" /></button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {!saved && (
+                        <button onClick={() => updateCs({ criteria: [...cs.criteria, { name: '', description: '', maxScore: '', weight: '', active: true }] })}
+                          className="mt-1.5 flex items-center gap-1 text-xs text-blue-700 hover:text-blue-800 font-medium">
+                          <Plus className="w-3.5 h-3.5" /> Thêm criterion
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -904,7 +1018,7 @@ export function CreateEventWizard({
                     ['Term', selectedTermPlan ? `${selectedTermPlan.term} ${selectedTermPlan.year}` : '—'],
                     ['Rounds', `${rounds.length} (${rounds.map(r => r.name).join(', ')})`],
                     ['Categories', String(categories.length)],
-                    ['Criteria', `${criteria.filter(c => c.active).length} criteria (total weight ${totalWeight}%)`],
+                    ['Criteria', `${wizardCsSets.length} bộ tiêu chí`],
                     ['Total Budget', `${totalBudget.toLocaleString()} VND`],
                   ].map(([k, v]) => (
                     <div key={k}><span className="text-blue-600 font-medium">{k}:</span><span className="text-blue-900 ml-2">{v}</span></div>
@@ -2243,6 +2357,15 @@ export function EventDetailPage({
   const [csActionLoading, setCsActionLoading] = useState(false);
   const [deletingCsId, setDeletingCsId] = useState<number | null>(null);
 
+  // Add criteria set modal state
+  type NewCsForm = { name: string; roundId: number | ''; categoryId: number | null; promotionTopN: number | '' };
+  const [addingCs, setAddingCs] = useState(false);
+  const [newCsForm, setNewCsForm] = useState<NewCsForm>({ name: '', roundId: '', categoryId: null, promotionTopN: '' });
+  const [newCsCriteria, setNewCsCriteria] = useState<CriterionForm[]>([
+    { name: '', description: '', maxScore: 10, weight: 100, active: true },
+  ]);
+  const [savingCs, setSavingCs] = useState(false);
+
   // Budget item editing
   const [deletingBudgetItemId, setDeletingBudgetItemId] = useState<number | null>(null);
 
@@ -2362,6 +2485,37 @@ export function EventDetailPage({
       toast.success('Đã cập nhật category');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Cập nhật category thất bại');
+    }
+  };
+
+  const handleCreateCs = async () => {
+    if (!newCsForm.name.trim()) { toast.error('Tên không được trống'); return; }
+    if (newCsForm.roundId === '') { toast.error('Vui lòng chọn vòng'); return; }
+    const activeCriteria = newCsCriteria.filter(c => c.active);
+    if (activeCriteria.length === 0) { toast.error('Cần ít nhất 1 criterion'); return; }
+    const totalW = activeCriteria.reduce((s, c) => s + (Number(c.weight) || 0), 0);
+    if (totalW !== 100) { toast.error(`Tổng weight phải = 100%. Hiện tại: ${totalW}%`); return; }
+    setSavingCs(true);
+    try {
+      const created = await createCriteriaSet(eventId, {
+        name: newCsForm.name.trim(),
+        roundId: newCsForm.roundId as number,
+        categoryId: newCsForm.categoryId ?? undefined,
+        promotionTopN: newCsForm.promotionTopN !== '' ? Number(newCsForm.promotionTopN) : undefined,
+        criteria: activeCriteria.map((c, idx) => ({
+          name: c.name, description: c.description || undefined,
+          maxScore: Number(c.maxScore) || 10, weight: Number(c.weight) || 0, displayOrder: idx + 1,
+        })),
+      });
+      setCriteriaSets(prev => [...prev, created]);
+      setAddingCs(false);
+      setNewCsForm({ name: '', roundId: '', categoryId: null, promotionTopN: '' });
+      setNewCsCriteria([{ name: '', description: '', maxScore: 10, weight: 100, active: true }]);
+      toast.success('Đã tạo criteria set');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Tạo thất bại');
+    } finally {
+      setSavingCs(false);
     }
   };
 
@@ -2717,67 +2871,102 @@ export function EventDetailPage({
 
       {/* Criteria Sets */}
       <section className="bg-white rounded-xl shadow-sm border border-slate-200">
-        <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
-          <List className="w-4 h-4 text-slate-400" />
-          <h2 className="text-sm font-semibold text-slate-700">Criteria Sets ({criteriaSets.length})</h2>
+        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <List className="w-4 h-4 text-slate-400" />
+            <h2 className="text-sm font-semibold text-slate-700">Criteria Sets ({criteriaSets.length})</h2>
+          </div>
+          {canEdit && (
+            <button onClick={() => setAddingCs(true)}
+              className="flex items-center gap-1 text-xs text-blue-700 font-medium hover:text-blue-800 px-2.5 py-1.5 rounded-lg hover:bg-blue-50 transition-colors border border-blue-200">
+              <Plus className="w-3.5 h-3.5" /> Thêm bộ tiêu chí
+            </button>
+          )}
+        </div>
+        <div className="px-5 py-2 bg-blue-50/50 border-b border-blue-100">
+          <p className="text-xs text-blue-700 italic">Cùng một vòng, mỗi hạng mục có thể có bộ tiêu chí, trọng số và Top-N riêng.</p>
         </div>
         {criteriaSets.length === 0 ? (
           <p className="px-5 py-6 text-sm text-slate-400 text-center">Chưa có criteria set nào.</p>
-        ) : (
-          <div className="divide-y divide-slate-100">
-            {criteriaSets.map(cs => (
-              <div key={cs.id} className="px-5 py-4">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-sm font-semibold text-slate-900">{cs.name}</p>
-                  {canEdit && (
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => openEditCs(cs)}
-                        className="p-1.5 rounded text-slate-400 hover:text-blue-700 hover:bg-blue-50 transition-colors"
-                        title="Sửa criteria set"
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteCs(cs.id)}
-                        disabled={deletingCsId === cs.id}
-                        className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
-                        title="Xóa criteria set"
-                      >
-                        {deletingCsId === cs.id
-                          ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                          : <Trash2 className="w-3.5 h-3.5" />}
-                      </button>
+        ) : (() => {
+          // Group by roundId for display
+          const roundOrder = rounds.map(r => r.id);
+          const byRound = new Map<number | null | undefined, CriteriaSet[]>();
+          for (const cs of criteriaSets) {
+            const key = cs.roundId ?? null;
+            if (!byRound.has(key)) byRound.set(key, []);
+            byRound.get(key)!.push(cs);
+          }
+          const sortedRoundKeys = [...byRound.keys()].sort((a, b) => {
+            if (a == null) return 1;
+            if (b == null) return -1;
+            return (roundOrder.indexOf(a ?? -1)) - (roundOrder.indexOf(b ?? -1));
+          });
+          return (
+            <div className="divide-y divide-slate-100">
+              {sortedRoundKeys.map(roundKey => {
+                const roundName = rounds.find(r => r.id === roundKey)?.name ?? (roundKey == null ? 'Chưa gán vòng' : `Round #${roundKey}`);
+                const setsInRound = byRound.get(roundKey)!;
+                return (
+                  <div key={String(roundKey)} className="px-5 py-3">
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Vòng: {roundName}</p>
+                    <div className="space-y-3">
+                      {setsInRound.map(cs => (
+                        <div key={cs.id} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                          <div className="flex items-start justify-between mb-2">
+                            <div>
+                              <p className="text-sm font-semibold text-slate-900">{cs.name}</p>
+                              <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                                <span className="text-[10px] bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full font-medium">
+                                  {cs.categoryName ? cs.categoryName : 'Chung cả vòng'}
+                                </span>
+                                {cs.promotionTopN != null && (
+                                  <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">
+                                    Top-{cs.promotionTopN}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            {canEdit && (
+                              <div className="flex items-center gap-1 flex-shrink-0">
+                                <button onClick={() => openEditCs(cs)}
+                                  className="p-1.5 rounded text-slate-400 hover:text-blue-700 hover:bg-blue-50 transition-colors" title="Sửa">
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                                <button onClick={() => handleDeleteCs(cs.id)} disabled={deletingCsId === cs.id}
+                                  className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50" title="Xóa">
+                                  {deletingCsId === cs.id ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                          {cs.criteria && cs.criteria.length > 0 && (
+                            <table className="w-full bg-white rounded border border-slate-100">
+                              <thead><tr className="border-b border-slate-100">
+                                {['Criterion', 'Max Score', 'Weight %'].map(h => (
+                                  <th key={h} className="text-left px-3 py-1.5 text-[10px] font-semibold text-slate-500 uppercase">{h}</th>
+                                ))}
+                              </tr></thead>
+                              <tbody className="divide-y divide-slate-50">
+                                {cs.criteria.map(cr => (
+                                  <tr key={cr.id}>
+                                    <td className="px-3 py-1.5 text-xs text-slate-800 font-medium">{cr.name}</td>
+                                    <td className="px-3 py-1.5 text-xs font-mono text-slate-600">{cr.maxScore}</td>
+                                    <td className="px-3 py-1.5 text-xs font-mono text-slate-600">{cr.weight}%</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                        </div>
+                      ))}
                     </div>
-                  )}
-                </div>
-                {cs.description && <p className="text-xs text-slate-500 mb-3">{cs.description}</p>}
-                {cs.criteria && cs.criteria.length > 0 && (
-                  <div className="bg-slate-50 rounded-lg overflow-hidden border border-slate-100">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="border-b border-slate-200">
-                          {['Criterion', 'Max Score', 'Weight %'].map(h => (
-                            <th key={h} className="text-left px-3 py-2 text-xs font-semibold text-slate-500">{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {cs.criteria.map(cr => (
-                          <tr key={cr.id}>
-                            <td className="px-3 py-2 text-xs text-slate-800 font-medium">{cr.name}</td>
-                            <td className="px-3 py-2 text-xs font-mono text-slate-600">{cr.maxScore}</td>
-                            <td className="px-3 py-2 text-xs font-mono text-slate-600">{cr.weight}%</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
                   </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
+                );
+              })}
+            </div>
+          );
+        })()}
       </section>
 
       {/* Budget Items */}
@@ -3009,6 +3198,105 @@ export function EventDetailPage({
               <input value={editBiFields.notes} onChange={e => setEditBiFields(p => ({ ...p, notes: e.target.value }))}
                 className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"
                 placeholder="Ghi chú thêm (tùy chọn)…" />
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Add Criteria Set modal */}
+      {addingCs && (
+        <Modal title="Thêm bộ tiêu chí" onClose={() => setAddingCs(false)} size="lg"
+          footer={
+            <>
+              <button onClick={() => setAddingCs(false)} disabled={savingCs} className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-lg hover:bg-slate-50 disabled:opacity-50">Huỷ</button>
+              <button onClick={handleCreateCs} disabled={savingCs} className="px-4 py-2 bg-blue-800 hover:bg-blue-900 text-white text-sm font-semibold rounded-lg flex items-center gap-2 disabled:opacity-50">
+                {savingCs ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Tạo bộ tiêu chí
+              </button>
+            </>
+          }
+        >
+          <div className="space-y-4">
+            <p className="text-xs text-slate-500 italic">Cùng một vòng, mỗi hạng mục có thể có bộ tiêu chí, trọng số và Top-N riêng.</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Tên bộ tiêu chí <span className="text-red-500">*</span></label>
+                <input value={newCsForm.name} onChange={e => setNewCsForm(p => ({ ...p, name: e.target.value }))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Vòng áp dụng <span className="text-red-500">*</span></label>
+                <select value={newCsForm.roundId} onChange={e => setNewCsForm(p => ({ ...p, roundId: e.target.value === '' ? '' : Number(e.target.value) }))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 bg-white">
+                  <option value="">-- Chọn vòng --</option>
+                  {rounds.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Hạng mục</label>
+                <select value={newCsForm.categoryId ?? ''} onChange={e => setNewCsForm(p => ({ ...p, categoryId: e.target.value === '' ? null : Number(e.target.value) }))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 bg-white">
+                  <option value="">Dùng chung cả vòng (categoryId = null)</option>
+                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Top-N thăng hạng</label>
+                <input type="number" min={1} value={newCsForm.promotionTopN === '' ? '' : newCsForm.promotionTopN}
+                  onChange={e => setNewCsForm(p => ({ ...p, promotionTopN: parseNumInput(e) }))}
+                  placeholder="Để trống = theo round"
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-700" />
+              </div>
+            </div>
+            {/* Criteria table */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-slate-600">Tiêu chí chấm điểm</label>
+                <div className={`flex items-center gap-1 text-xs font-mono font-bold px-2 py-0.5 rounded ${
+                  newCsCriteria.filter(c => c.active).reduce((s, c) => s + (Number(c.weight) || 0), 0) === 100
+                    ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+                }`}>
+                  Total: {newCsCriteria.filter(c => c.active).reduce((s, c) => s + (Number(c.weight) || 0), 0)}%
+                </div>
+              </div>
+              <div className="border border-slate-200 rounded-lg overflow-hidden">
+                <table className="w-full">
+                  <thead><tr className="bg-slate-50 border-b border-slate-200">
+                    {['Tên criterion', 'Max Score', 'Weight %', ''].map(h => (
+                      <th key={h} className="text-left px-3 py-2 text-xs font-semibold text-slate-500">{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {newCsCriteria.map((c, idx) => (
+                      <tr key={idx}>
+                        <td className="px-2 py-1.5">
+                          <input value={c.name} onChange={e => { const copy = [...newCsCriteria]; copy[idx] = { ...copy[idx], name: e.target.value }; setNewCsCriteria(copy); }}
+                            className="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-700" />
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <input type="number" min={1} value={c.maxScore === '' ? '' : c.maxScore}
+                            onChange={e => { const copy = [...newCsCriteria]; copy[idx] = { ...copy[idx], maxScore: parseNumInput(e) }; setNewCsCriteria(copy); }}
+                            className="w-16 border border-slate-200 rounded px-2 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-700" />
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <input type="number" min={0} max={100} value={c.weight === '' ? '' : c.weight}
+                            onChange={e => { const copy = [...newCsCriteria]; copy[idx] = { ...copy[idx], weight: parseNumInput(e) }; setNewCsCriteria(copy); }}
+                            className="w-16 border border-slate-200 rounded px-2 py-1 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-700" />
+                        </td>
+                        <td className="px-2 py-1.5">
+                          {newCsCriteria.length > 1 && (
+                            <button onClick={() => setNewCsCriteria(prev => prev.filter((_, j) => j !== idx))}
+                              className="p-0.5 text-slate-300 hover:text-red-500 transition-colors"><X className="w-3.5 h-3.5" /></button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <button onClick={() => setNewCsCriteria(prev => [...prev, { name: '', description: '', maxScore: 10, weight: 0, active: true }])}
+                className="mt-1.5 flex items-center gap-1 text-xs text-blue-700 hover:text-blue-800 font-medium">
+                <Plus className="w-3.5 h-3.5" /> Thêm criterion
+              </button>
             </div>
           </div>
         </Modal>
