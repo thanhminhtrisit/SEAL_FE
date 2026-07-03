@@ -38,7 +38,10 @@ import {
   getBudget,
   updateBudgetItem,
   deleteBudgetItem,
+  updateEvent,
   type EventSummary,
+  type UpdateEventRequest,
+  type UpdateBudgetItemRequest,
   type EventRound,
   type EventCategory,
   type CriteriaSet,
@@ -46,7 +49,7 @@ import {
   type BudgetItem,
   type EventType,
 } from '../../api/events';
-import { getDisciplines, getTermPlans, getBudgetCategories, type Discipline, type TermPlan, type BudgetCategory } from '../../api/governance';
+import { getDisciplines, getTermPlans, getBudgetCategories, getMentors, type Discipline, type TermPlan, type BudgetCategory, type Mentor } from '../../api/governance';
 import { getTeamsByEvent, reviewTeam, type TeamSummary } from '../../api/teams';
 import {
   getJudges, getRoundJudges, assignJudge, revokeJudge, createGuestJudge,
@@ -65,6 +68,10 @@ function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: st
 
 function safeArray<T>(value: T[] | null | undefined): T[] {
   return Array.isArray(value) ? value : [];
+}
+
+function parseNumInput(e: React.ChangeEvent<HTMLInputElement>): number | '' {
+  return isNaN(e.target.valueAsNumber) ? '' : e.target.valueAsNumber;
 }
 
 const sampleEvent = {
@@ -344,10 +351,20 @@ function toDateTime(val: string, endOfDay = false): string | undefined {
 
 const WIZARD_STEPS = ['Basic Info', 'Rounds', 'Categories', 'Criteria', 'Budget', 'Review & Submit'];
 
-interface RoundForm { name: string; submissionDeadline: string; promotionTopN: number | ''; isFinalRound: boolean; }
-interface CategoryForm { name: string; description: string; }
-interface CriterionForm { name: string; description: string; maxScore: number; weight: number; active: boolean; }
-interface BudgetItemForm { categoryId: number | ''; description: string; quantity: number; unitCost: number; }
+interface RoundForm {
+  name: string;
+  submissionDeadline: string;
+  scoringDeadline: string;
+  promotionTopN: number | '';
+  isFinalRound: boolean;
+  requiresRepo: boolean;
+  requiresDemo: boolean;
+  requiresSlide: boolean;
+  requiresReport: boolean;
+}
+interface CategoryForm { name: string; description: string; mentorId: number | ''; }
+interface CriterionForm { name: string; description: string; maxScore: number | ''; weight: number | ''; active: boolean; }
+interface BudgetItemForm { categoryId: number | ''; description: string; quantity: number | ''; unitCost: number | ''; }
 
 export function CreateEventWizard({
   onNavigate,
@@ -364,6 +381,7 @@ export function CreateEventWizard({
   const [disciplines, setDisciplines] = useState<Discipline[]>([]);
   const [allTermPlans, setAllTermPlans] = useState<TermPlan[]>([]);
   const [budgetCategories, setBudgetCategories] = useState<BudgetCategory[]>([]);
+  const [mentors, setMentors] = useState<Mentor[]>([]);
   const [loadingMeta, setLoadingMeta] = useState(true);
 
   // Step 0 – Basic Info
@@ -377,16 +395,16 @@ export function CreateEventWizard({
 
   // Step 1 – Rounds
   const [rounds, setRounds] = useState<RoundForm[]>([
-    { name: 'Preliminary Round', submissionDeadline: '2026-07-25', promotionTopN: 6, isFinalRound: false },
-    { name: 'Final Round', submissionDeadline: '2026-08-08', promotionTopN: 3, isFinalRound: true },
+    { name: 'Preliminary Round', submissionDeadline: '2026-07-25', scoringDeadline: '', promotionTopN: 6, isFinalRound: false, requiresRepo: true, requiresDemo: false, requiresSlide: true, requiresReport: false },
+    { name: 'Final Round', submissionDeadline: '2026-08-08', scoringDeadline: '', promotionTopN: 3, isFinalRound: true, requiresRepo: true, requiresDemo: true, requiresSlide: true, requiresReport: true },
   ]);
   const [roundIds, setRoundIds] = useState<number[]>([]);
 
   // Step 2 – Categories
   const [categories, setCategories] = useState<CategoryForm[]>([
-    { name: 'Web Application', description: 'Full-stack web apps' },
-    { name: 'Mobile Application', description: 'iOS/Android mobile apps' },
-    { name: 'AI/Automation Tool', description: 'ML, AI-powered tools' },
+    { name: 'Web Application', description: 'Full-stack web apps', mentorId: '' },
+    { name: 'Mobile Application', description: 'iOS/Android mobile apps', mentorId: '' },
+    { name: 'AI/Automation Tool', description: 'ML, AI-powered tools', mentorId: '' },
   ]);
   const [categoryIds, setCategoryIds] = useState<number[]>([]);
 
@@ -396,7 +414,7 @@ export function CreateEventWizard({
     { name: 'Innovation', description: 'Originality, creative use of technology, novelty of approach', maxScore: 10, weight: 25, active: true },
     { name: 'UI/UX Design', description: 'Interface usability, visual design, user experience quality', maxScore: 10, weight: 20, active: true },
     { name: 'Presentation', description: 'Demo clarity, Q&A responses, communication', maxScore: 10, weight: 15, active: true },
-  ]);
+  ] as CriterionForm[]);
   const [criteriaSetId, setCriteriaSetId] = useState<number | null>(null);
 
   // Step 4 – Budget
@@ -408,13 +426,13 @@ export function CreateEventWizard({
     { categoryId: '', description: 'Event Day Meals & Drinks', quantity: 1, unitCost: 8000000 },
     { categoryId: '', description: 'Guest Judge Honorarium', quantity: 2, unitCost: 2000000 },
     { categoryId: '', description: 'Posters & Online Promotion', quantity: 1, unitCost: 3000000 },
-  ]);
+  ] as BudgetItemForm[]);
 
   // Derived
   const filteredTermPlans = allTermPlans.filter(tp => disciplineId !== '' && tp.disciplineId === (disciplineId as number));
   const selectedTermPlan = allTermPlans.find(tp => tp.id === termPlanId);
   const autoEventType = selectedTermPlan?.term as EventType | undefined;
-  const totalWeight = criteria.filter(c => c.active).reduce((s, c) => s + c.weight, 0);
+  const totalWeight = criteria.filter(c => c.active).reduce((s, c) => s + (Number(c.weight) || 0), 0);
   // Only count rows that have both a category and a description — these are the rows actually sent to BE
   const validBudgetItems = budgetItems.filter(i => i.categoryId !== '' && i.description.trim() !== '');
   const skippedBudgetCount = budgetItems.length - validBudgetItems.length;
@@ -424,8 +442,18 @@ export function CreateEventWizard({
   );
 
   useEffect(() => {
-    Promise.all([getDisciplines(), getTermPlans(), getBudgetCategories()])
-      .then(([d, tp, bc]) => { setDisciplines(safeArray(d)); setAllTermPlans(safeArray(tp)); setBudgetCategories(safeArray(bc)); })
+    Promise.all([
+      getDisciplines(),
+      getTermPlans(),
+      getBudgetCategories(),
+      getMentors().catch(() => [] as Mentor[]),
+    ])
+      .then(([d, tp, bc, m]) => {
+        setDisciplines(safeArray(d));
+        setAllTermPlans(safeArray(tp));
+        setBudgetCategories(safeArray(bc));
+        setMentors(safeArray(m));
+      })
       .catch(err => toast.error(err instanceof Error ? err.message : 'Không tải được dữ liệu'))
       .finally(() => setLoadingMeta(false));
   }, []);
@@ -462,8 +490,13 @@ export function CreateEventWizard({
             name: r.name,
             orderNumber: i + 1,
             submissionDeadline: toDateTime(r.submissionDeadline, true),
-            promotionTopN: typeof r.promotionTopN === 'number' ? r.promotionTopN : undefined,
+            scoringDeadline: toDateTime(r.scoringDeadline, true),
+            promotionTopN: r.promotionTopN !== '' ? Number(r.promotionTopN) : undefined,
             finalRound: r.isFinalRound,
+            requiresRepo: r.requiresRepo,
+            requiresDemo: r.requiresDemo,
+            requiresSlide: r.requiresSlide,
+            requiresReport: r.requiresReport,
           }));
         }
         setRoundIds(saved.map(r => r.id));
@@ -473,6 +506,7 @@ export function CreateEventWizard({
           saved.push(await createCategory(eventId, {
             name: cat.name,
             description: cat.description || undefined,
+            mentorId: cat.mentorId !== '' ? Number(cat.mentorId) : undefined,
           }));
         }
         setCategoryIds(saved.map(c => c.id));
@@ -485,8 +519,8 @@ export function CreateEventWizard({
           criteria: active.map((c, idx) => ({
             name: c.name,
             description: c.description || undefined,
-            maxScore: c.maxScore,
-            weight: c.weight,
+            maxScore: Number(c.maxScore) || 10,
+            weight: Number(c.weight) || 0,
             displayOrder: idx + 1,
           })),
         });
@@ -498,8 +532,8 @@ export function CreateEventWizard({
           await createBudgetItem(eventId, {
             categoryId: i.categoryId as number,
             description: i.description.trim(),
-            quantity: i.quantity,
-            unitCost: i.unitCost,
+            quantity: Number(i.quantity) || 1,
+            unitCost: Number(i.unitCost) || 0,
           });
         }
         setBudgetId(budget.id);
@@ -660,7 +694,7 @@ export function CreateEventWizard({
             <div className="space-y-4">
               <div className="flex justify-end">
                 <button
-                  onClick={() => roundIds.length === 0 && setRounds(prev => [...prev, { name: `Round ${prev.length + 1}`, submissionDeadline: '', promotionTopN: '', isFinalRound: false }])}
+                  onClick={() => roundIds.length === 0 && setRounds(prev => [...prev, { name: `Round ${prev.length + 1}`, submissionDeadline: '', scoringDeadline: '', promotionTopN: '', isFinalRound: false, requiresRepo: false, requiresDemo: false, requiresSlide: false, requiresReport: false }])}
                   disabled={roundIds.length > 0}
                   className="flex items-center gap-1.5 text-sm text-blue-700 font-medium hover:text-blue-800 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
@@ -678,28 +712,39 @@ export function CreateEventWizard({
                       )}
                     </div>
                   </div>
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-medium text-slate-600 mb-1">Round Name</label>
                       <input value={r.name} onChange={e => { const c = [...rounds]; c[i] = { ...c[i], name: e.target.value }; setRounds(c); }} disabled={roundIds.length > 0}
                         className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
                     </div>
                     <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">Promote Top N Teams</label>
+                      <input type="number" min={1} value={r.promotionTopN === '' ? '' : r.promotionTopN} onChange={e => { const c = [...rounds]; c[i] = { ...c[i], promotionTopN: parseNumInput(e) }; setRounds(c); }} disabled={roundIds.length > 0}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
                       <label className="block text-xs font-medium text-slate-600 mb-1">Submission Deadline</label>
                       <input type="date" value={r.submissionDeadline} onChange={e => { const c = [...rounds]; c[i] = { ...c[i], submissionDeadline: e.target.value }; setRounds(c); }} disabled={roundIds.length > 0}
                         className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-slate-600 mb-1">Promote Top N Teams</label>
-                      <input type="number" value={r.promotionTopN} onChange={e => { const c = [...rounds]; c[i] = { ...c[i], promotionTopN: e.target.value === '' ? '' : Number(e.target.value) }; setRounds(c); }} disabled={roundIds.length > 0}
-                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
+                      <label className="block text-xs font-medium text-slate-600 mb-1">Scoring Deadline</label>
+                      <input type="date" value={r.scoringDeadline} onChange={e => { const c = [...rounds]; c[i] = { ...c[i], scoringDeadline: e.target.value }; setRounds(c); }} disabled={roundIds.length > 0}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <input type="checkbox" id={`final-${i}`} checked={r.isFinalRound}
-                      onChange={e => { const c = [...rounds]; c[i] = { ...c[i], isFinalRound: e.target.checked }; setRounds(c); }}
-                      disabled={roundIds.length > 0} className="rounded border-slate-300" />
-                    <label htmlFor={`final-${i}`} className="text-xs text-slate-600">This is the final round</label>
+                  <div className="flex flex-wrap items-center gap-4">
+                    {([['isFinalRound', 'Final Round'], ['requiresRepo', 'Repo'], ['requiresDemo', 'Demo'], ['requiresSlide', 'Slide'], ['requiresReport', 'Report']] as [keyof RoundForm, string][]).map(([field, label]) => (
+                      <label key={field} className="flex items-center gap-1.5 cursor-pointer select-none">
+                        <input type="checkbox" checked={!!r[field]} disabled={roundIds.length > 0}
+                          onChange={e => { const c = [...rounds]; c[i] = { ...c[i], [field]: e.target.checked }; setRounds(c); }}
+                          className="rounded border-slate-300" />
+                        <span className="text-xs text-slate-600">{label}</span>
+                      </label>
+                    ))}
                   </div>
                 </div>
               ))}
@@ -711,7 +756,7 @@ export function CreateEventWizard({
             <div className="space-y-4">
               <div className="flex justify-end">
                 <button
-                  onClick={() => categoryIds.length === 0 && setCategories(prev => [...prev, { name: '', description: '' }])}
+                  onClick={() => categoryIds.length === 0 && setCategories(prev => [...prev, { name: '', description: '', mentorId: '' }])}
                   disabled={categoryIds.length > 0}
                   className="flex items-center gap-1.5 text-sm text-blue-700 font-medium hover:text-blue-800 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
@@ -719,7 +764,7 @@ export function CreateEventWizard({
                 </button>
               </div>
               {categories.map((cat, i) => (
-                <div key={i} className="p-4 rounded-lg border border-slate-200 grid grid-cols-2 gap-3">
+                <div key={i} className="p-4 rounded-lg border border-slate-200 grid grid-cols-3 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-slate-600 mb-1">Category Name</label>
                     <input value={cat.name} onChange={e => { const c = [...categories]; c[i] = { ...c[i], name: e.target.value }; setCategories(c); }} disabled={categoryIds.length > 0}
@@ -729,6 +774,14 @@ export function CreateEventWizard({
                     <label className="block text-xs font-medium text-slate-600 mb-1">Description</label>
                     <input value={cat.description} onChange={e => { const c = [...categories]; c[i] = { ...c[i], description: e.target.value }; setCategories(c); }} disabled={categoryIds.length > 0}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Mentor <span className="text-slate-400">(optional)</span></label>
+                    <select value={cat.mentorId} onChange={e => { const c = [...categories]; c[i] = { ...c[i], mentorId: e.target.value === '' ? '' : Number(e.target.value) }; setCategories(c); }} disabled={categoryIds.length > 0}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50">
+                      <option value="">— Không gán —</option>
+                      {mentors.map(m => <option key={m.id} value={m.id}>{m.fullName}</option>)}
+                    </select>
                   </div>
                 </div>
               ))}
@@ -759,11 +812,11 @@ export function CreateEventWizard({
                           className="w-full border border-slate-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
                       </td>
                       <td className="px-3 py-2.5">
-                        <input type="number" min={1} max={100} value={c.maxScore} onChange={e => { const copy = [...criteria]; copy[i] = { ...copy[i], maxScore: Number(e.target.value) }; setCriteria(copy); }} disabled={!!criteriaSetId}
+                        <input type="number" min={1} max={100} value={c.maxScore === 0 || c.maxScore === '' ? '' : c.maxScore} onChange={e => { const copy = [...criteria]; copy[i] = { ...copy[i], maxScore: parseNumInput(e) }; setCriteria(copy); }} disabled={!!criteriaSetId}
                           className="w-16 border border-slate-200 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
                       </td>
                       <td className="px-3 py-2.5">
-                        <input type="number" min={0} max={100} value={c.weight} onChange={e => { const copy = [...criteria]; copy[i] = { ...copy[i], weight: Number(e.target.value) }; setCriteria(copy); }} disabled={!!criteriaSetId}
+                        <input type="number" min={0} max={100} value={c.weight === 0 || c.weight === '' ? '' : c.weight} onChange={e => { const copy = [...criteria]; copy[i] = { ...copy[i], weight: parseNumInput(e) }; setCriteria(copy); }} disabled={!!criteriaSetId}
                           className="w-16 border border-slate-200 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
                       </td>
                       <td className="px-3 py-2.5">
@@ -802,11 +855,11 @@ export function CreateEventWizard({
                           className="w-full border border-slate-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
                       </td>
                       <td className="px-3 py-2">
-                        <input type="number" min={1} value={item.quantity} onChange={e => { const c = [...budgetItems]; c[i] = { ...c[i], quantity: Number(e.target.value) }; setBudgetItems(c); }} disabled={!!budgetId}
+                        <input type="number" min={1} value={item.quantity === 0 || item.quantity === '' ? '' : item.quantity} onChange={e => { const c = [...budgetItems]; c[i] = { ...c[i], quantity: parseNumInput(e) }; setBudgetItems(c); }} disabled={!!budgetId}
                           className="w-14 border border-slate-200 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
                       </td>
                       <td className="px-3 py-2">
-                        <input type="number" min={0} value={item.unitCost} onChange={e => { const c = [...budgetItems]; c[i] = { ...c[i], unitCost: Number(e.target.value) }; setBudgetItems(c); }} disabled={!!budgetId}
+                        <input type="number" min={0} value={item.unitCost === 0 || item.unitCost === '' ? '' : item.unitCost} onChange={e => { const c = [...budgetItems]; c[i] = { ...c[i], unitCost: parseNumInput(e) }; setBudgetItems(c); }} disabled={!!budgetId}
                           className="w-28 border border-slate-200 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50" />
                       </td>
                       <td className={`px-3 py-2 text-sm font-mono font-semibold text-right ${isValid ? 'text-slate-900' : 'text-slate-400 line-through'}`}>
@@ -2150,15 +2203,37 @@ export function EventDetailPage({
   const [actionLoading, setActionLoading] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
-  // Edit/Delete state for rounds
+  // Edit/Delete state for rounds (full fields)
   const [editingRound, setEditingRound] = useState<EventRound | null>(null);
-  const [editRoundName, setEditRoundName] = useState('');
+  type RoundEdit = {
+    name: string; submissionDeadline: string; scoringDeadline: string;
+    promotionTopN: number | ''; finalRound: boolean;
+    requiresRepo: boolean; requiresDemo: boolean; requiresSlide: boolean; requiresReport: boolean;
+  };
+  const [editRoundFields, setEditRoundFields] = useState<RoundEdit>({
+    name: '', submissionDeadline: '', scoringDeadline: '', promotionTopN: '', finalRound: false,
+    requiresRepo: false, requiresDemo: false, requiresSlide: false, requiresReport: false,
+  });
   const [deletingRoundId, setDeletingRoundId] = useState<number | null>(null);
 
   // Edit/Delete state for categories
   const [editingCategory, setEditingCategory] = useState<EventCategory | null>(null);
   const [editCategoryName, setEditCategoryName] = useState('');
+  const [editCategoryMentorId, setEditCategoryMentorId] = useState<number | ''>('');
   const [deletingCategoryId, setDeletingCategoryId] = useState<number | null>(null);
+
+  // Budget item editing
+  const [budgetCategories, setBudgetCategories] = useState<BudgetCategory[]>([]);
+  const [mentors, setMentors] = useState<Mentor[]>([]);
+  type BudgetItemEdit = { categoryId: number | ''; description: string; quantity: number | ''; unitCost: number | ''; notes: string };
+  const [editingBudgetItem, setEditingBudgetItem] = useState<BudgetItem | null>(null);
+  const [editBiFields, setEditBiFields] = useState<BudgetItemEdit>({ categoryId: '', description: '', quantity: '', unitCost: '', notes: '' });
+  const [savingBudgetItem, setSavingBudgetItem] = useState(false);
+
+  // Capacity editing (via PATCH event — not set at create time)
+  type CapacityEdit = { maxTeamSize: number | ''; maxTeams: number | ''; maxParticipants: number | ''; maxTeamsPerMentor: number | '' };
+  const [capacityEdit, setCapacityEdit] = useState<CapacityEdit>({ maxTeamSize: '', maxTeams: '', maxParticipants: '', maxTeamsPerMentor: '' });
+  const [savingCapacity, setSavingCapacity] = useState(false);
 
   // Criteria set editing state
   type CriterionEdit = { id: number; name: string; maxScore: number; weight: number; description?: string };
@@ -2178,26 +2253,27 @@ export function EventDetailPage({
 
     Promise.all([
       getEvent(eventId),
-      getEventRounds(eventId).catch(err => {
-        toast.error(err instanceof Error ? err.message : 'Không tải được rounds');
-        return [] as EventRound[];
-      }),
-      getEventCategories(eventId).catch(err => {
-        toast.error(err instanceof Error ? err.message : 'Không tải được categories');
-        return [] as EventCategory[];
-      }),
-      getEventCriteriaSets(eventId).catch(err => {
-        toast.error(err instanceof Error ? err.message : 'Không tải được criteria sets');
-        return [] as CriteriaSet[];
-      }),
+      getEventRounds(eventId).catch(() => [] as EventRound[]),
+      getEventCategories(eventId).catch(() => [] as EventCategory[]),
+      getEventCriteriaSets(eventId).catch(() => [] as CriteriaSet[]),
       getBudget(eventId).catch(() => null as BudgetResponse | null),
+      getBudgetCategories().catch(() => [] as BudgetCategory[]),
+      getMentors().catch(() => [] as Mentor[]),
     ])
-      .then(([ev, r, c, cs, bg]) => {
+      .then(([ev, r, c, cs, bg, bc, m]) => {
         setEvent(ev);
         setRounds(safeArray(r));
         setCategories(safeArray(c));
         setCriteriaSets(safeArray(cs).map(set => ({ ...set, criteria: safeArray(set.criteria) })));
         setBudget(bg);
+        setBudgetCategories(safeArray(bc));
+        setMentors(safeArray(m));
+        setCapacityEdit({
+          maxTeamSize: ev.maxTeamSize ?? '',
+          maxTeams: ev.maxTeams ?? '',
+          maxParticipants: ev.maxParticipants ?? '',
+          maxTeamsPerMentor: ev.maxTeamsPerMentor ?? '',
+        });
       })
       .catch(err => {
         const message = err instanceof Error ? err.message : 'Không tải được event';
@@ -2240,12 +2316,22 @@ export function EventDetailPage({
   };
 
   const handleSaveRound = async () => {
-    if (!editingRound || !editRoundName.trim()) return;
+    if (!editingRound || !editRoundFields.name.trim()) return;
     try {
-      const updated = await updateRound(eventId, editingRound.id, { name: editRoundName.trim() });
+      const updated = await updateRound(eventId, editingRound.id, {
+        name: editRoundFields.name.trim(),
+        submissionDeadline: editRoundFields.submissionDeadline ? toDateTime(editRoundFields.submissionDeadline, true) : null,
+        scoringDeadline: editRoundFields.scoringDeadline ? toDateTime(editRoundFields.scoringDeadline, true) : null,
+        promotionTopN: editRoundFields.promotionTopN !== '' ? Number(editRoundFields.promotionTopN) : null,
+        finalRound: editRoundFields.finalRound,
+        requiresRepo: editRoundFields.requiresRepo,
+        requiresDemo: editRoundFields.requiresDemo,
+        requiresSlide: editRoundFields.requiresSlide,
+        requiresReport: editRoundFields.requiresReport,
+      });
       setRounds(prev => prev.map(r => r.id === editingRound.id ? updated : r));
       setEditingRound(null);
-      toast.success('Đã cập nhật tên round');
+      toast.success('Đã cập nhật round');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Cập nhật round thất bại');
     }
@@ -2267,10 +2353,13 @@ export function EventDetailPage({
   const handleSaveCategory = async () => {
     if (!editingCategory || !editCategoryName.trim()) return;
     try {
-      const updated = await updateCategory(eventId, editingCategory.id, { name: editCategoryName.trim() });
+      const updated = await updateCategory(eventId, editingCategory.id, {
+        name: editCategoryName.trim(),
+        mentorId: editCategoryMentorId !== '' ? Number(editCategoryMentorId) : null,
+      });
       setCategories(prev => prev.map(c => c.id === editingCategory.id ? updated : c));
       setEditingCategory(null);
-      toast.success('Đã cập nhật tên category');
+      toast.success('Đã cập nhật category');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Cập nhật category thất bại');
     }
@@ -2333,6 +2422,67 @@ export function EventDetailPage({
       toast.error(err instanceof Error ? err.message : 'Xóa ngân sách thất bại');
     } finally {
       setDeletingBudgetItemId(null);
+    }
+  };
+
+  const openEditBudgetItem = (item: BudgetItem) => {
+    setEditingBudgetItem(item);
+    setEditBiFields({
+      categoryId: item.categoryId,
+      description: item.description,
+      quantity: item.quantity,
+      unitCost: item.unitCost,
+      notes: item.notes ?? '',
+    });
+  };
+
+  const handleSaveBudgetItem = async () => {
+    if (!editingBudgetItem) return;
+    if (!editBiFields.description.trim()) { toast.error('Mô tả không được trống'); return; }
+    if (editBiFields.categoryId === '') { toast.error('Vui lòng chọn danh mục'); return; }
+    setSavingBudgetItem(true);
+    try {
+      const req: UpdateBudgetItemRequest = {
+        categoryId: Number(editBiFields.categoryId),
+        description: editBiFields.description.trim(),
+        quantity: Number(editBiFields.quantity) || 1,
+        unitCost: Number(editBiFields.unitCost) || 0,
+        notes: editBiFields.notes.trim() || undefined,
+      };
+      const updatedBudget = await updateBudgetItem(eventId, editingBudgetItem.id, req);
+      setBudget(updatedBudget);
+      setEditingBudgetItem(null);
+      toast.success('Đã cập nhật mục ngân sách');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Cập nhật ngân sách thất bại');
+    } finally {
+      setSavingBudgetItem(false);
+    }
+  };
+
+  const handleSaveCapacity = async () => {
+    if (!event) return;
+    setSavingCapacity(true);
+    try {
+      const req: UpdateEventRequest = {
+        maxTeamSize: capacityEdit.maxTeamSize !== '' ? Number(capacityEdit.maxTeamSize) : null,
+        maxTeams: capacityEdit.maxTeams !== '' ? Number(capacityEdit.maxTeams) : null,
+        maxParticipants: capacityEdit.maxParticipants !== '' ? Number(capacityEdit.maxParticipants) : null,
+        maxTeamsPerMentor: capacityEdit.maxTeamsPerMentor !== '' ? Number(capacityEdit.maxTeamsPerMentor) : null,
+      };
+      const updated = await updateEvent(eventId, req);
+      setEvent(updated);
+      setCapacityEdit({
+        maxTeamSize: updated.maxTeamSize ?? '',
+        maxTeams: updated.maxTeams ?? '',
+        maxParticipants: updated.maxParticipants ?? '',
+        maxTeamsPerMentor: updated.maxTeamsPerMentor ?? '',
+      });
+      toast.success('Đã lưu thông số sức chứa');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Lưu sức chứa thất bại');
+    } finally {
+      setSavingCapacity(false);
     }
   };
 
@@ -2400,6 +2550,53 @@ export function EventDetailPage({
         )}
       </div>
 
+      {/* Capacity Settings */}
+      <section className="bg-white rounded-xl shadow-sm border border-slate-200">
+        <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
+          <Users className="w-4 h-4 text-slate-400" />
+          <h2 className="text-sm font-semibold text-slate-700">Sức chứa & Giới hạn</h2>
+        </div>
+        <div className="px-5 py-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            {([
+              ['maxTeamSize', 'Số thành viên tối đa/team'],
+              ['maxTeams', 'Số team tối đa'],
+              ['maxParticipants', 'Số người tham gia tối đa'],
+              ['maxTeamsPerMentor', 'Số team tối đa/mentor'],
+            ] as [keyof CapacityEdit, string][]).map(([field, label]) => (
+              <div key={field}>
+                <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
+                <input
+                  type="number" min={1}
+                  value={capacityEdit[field] === 0 || capacityEdit[field] === '' ? '' : capacityEdit[field]}
+                  onChange={e => setCapacityEdit(prev => ({ ...prev, [field]: parseNumInput(e) }))}
+                  disabled={!canEdit || savingCapacity}
+                  placeholder="—"
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50"
+                />
+              </div>
+            ))}
+          </div>
+          {canEdit && (
+            <div className="mt-3 flex justify-end">
+              <button
+                onClick={handleSaveCapacity}
+                disabled={savingCapacity}
+                className="flex items-center gap-1.5 bg-blue-800 hover:bg-blue-900 disabled:opacity-50 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+              >
+                {savingCapacity
+                  ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  : <Save className="w-3.5 h-3.5" />}
+                Lưu sức chứa
+              </button>
+            </div>
+          )}
+          {!canEdit && (
+            <p className="mt-2 text-xs text-slate-400">Chỉ sửa được khi event ở trạng thái DRAFT hoặc REJECTED.</p>
+          )}
+        </div>
+      </section>
+
       {/* Rounds */}
       <section className="bg-white rounded-xl shadow-sm border border-slate-200">
         <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
@@ -2429,7 +2626,20 @@ export function EventDetailPage({
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1.5">
                         <button
-                          onClick={() => { setEditingRound(r); setEditRoundName(r.name); }}
+                          onClick={() => {
+                            setEditingRound(r);
+                            setEditRoundFields({
+                              name: r.name,
+                              submissionDeadline: r.submissionDeadline?.slice(0, 10) ?? '',
+                              scoringDeadline: r.scoringDeadline?.slice(0, 10) ?? '',
+                              promotionTopN: r.promotionTopN ?? '',
+                              finalRound: r.finalRound ?? false,
+                              requiresRepo: r.requiresRepo ?? false,
+                              requiresDemo: r.requiresDemo ?? false,
+                              requiresSlide: r.requiresSlide ?? false,
+                              requiresReport: r.requiresReport ?? false,
+                            });
+                          }}
                           className="p-1.5 rounded text-slate-400 hover:text-blue-700 hover:bg-blue-50 transition-colors"
                           title="Sửa round"
                         >
@@ -2480,7 +2690,7 @@ export function EventDetailPage({
                   {canEdit && (
                     <div className="flex items-center gap-1">
                       <button
-                        onClick={() => { setEditingCategory(cat); setEditCategoryName(cat.name); }}
+                        onClick={() => { setEditingCategory(cat); setEditCategoryName(cat.name); setEditCategoryMentorId(cat.mentorId ?? ''); }}
                         className="p-1.5 rounded text-slate-400 hover:text-blue-700 hover:bg-blue-50 transition-colors"
                         title="Sửa category"
                       >
@@ -2603,16 +2813,25 @@ export function EventDetailPage({
                   </td>
                   {canEdit && (
                     <td className="px-4 py-3">
-                      <button
-                        onClick={() => handleDeleteBudgetItem(item.id)}
-                        disabled={deletingBudgetItemId === item.id}
-                        className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
-                        title="Xóa mục ngân sách"
-                      >
-                        {deletingBudgetItemId === item.id
-                          ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                          : <Trash2 className="w-3.5 h-3.5" />}
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => openEditBudgetItem(item)}
+                          className="p-1.5 rounded text-slate-400 hover:text-blue-700 hover:bg-blue-50 transition-colors"
+                          title="Sửa mục ngân sách"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteBudgetItem(item.id)}
+                          disabled={deletingBudgetItemId === item.id}
+                          className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+                          title="Xóa mục ngân sách"
+                        >
+                          {deletingBudgetItemId === item.id
+                            ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            : <Trash2 className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
                     </td>
                   )}
                 </tr>
@@ -2656,7 +2875,7 @@ export function EventDetailPage({
 
       {/* Edit Round modal */}
       {editingRound && (
-        <Modal title="Sửa Round" onClose={() => setEditingRound(null)} size="sm"
+        <Modal title={`Sửa Round: ${editingRound.name}`} onClose={() => setEditingRound(null)} size="md"
           footer={
             <>
               <button onClick={() => setEditingRound(null)} className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-lg hover:bg-slate-50">Huỷ</button>
@@ -2666,14 +2885,46 @@ export function EventDetailPage({
             </>
           }
         >
-          <div className="space-y-3">
-            <label className="block text-xs font-semibold text-slate-600 mb-1">Tên round</label>
-            <input
-              value={editRoundName}
-              onChange={e => setEditRoundName(e.target.value)}
-              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"
-              placeholder="Tên round…"
-            />
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Tên round <span className="text-red-500">*</span></label>
+              <input value={editRoundFields.name} onChange={e => setEditRoundFields(p => ({ ...p, name: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Submission Deadline</label>
+                <input type="date" value={editRoundFields.submissionDeadline} onChange={e => setEditRoundFields(p => ({ ...p, submissionDeadline: e.target.value }))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Scoring Deadline</label>
+                <input type="date" value={editRoundFields.scoringDeadline} onChange={e => setEditRoundFields(p => ({ ...p, scoringDeadline: e.target.value }))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Promote Top N Teams</label>
+              <input type="number" min={1} value={editRoundFields.promotionTopN === '' ? '' : editRoundFields.promotionTopN}
+                onChange={e => setEditRoundFields(p => ({ ...p, promotionTopN: parseNumInput(e) }))}
+                className="w-32 border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-700" />
+            </div>
+            <div className="flex flex-wrap gap-4">
+              {([
+                ['finalRound', 'Final Round'],
+                ['requiresRepo', 'Repo URL'],
+                ['requiresDemo', 'Demo URL'],
+                ['requiresSlide', 'Slide'],
+                ['requiresReport', 'Report'],
+              ] as [keyof RoundEdit, string][]).map(([field, label]) => (
+                <label key={field} className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" checked={!!editRoundFields[field]}
+                    onChange={e => setEditRoundFields(p => ({ ...p, [field]: e.target.checked }))}
+                    className="rounded border-slate-300" />
+                  <span className="text-xs text-slate-700">{label}</span>
+                </label>
+              ))}
+            </div>
           </div>
         </Modal>
       )}
@@ -2690,14 +2941,75 @@ export function EventDetailPage({
             </>
           }
         >
-          <div className="space-y-3">
-            <label className="block text-xs font-semibold text-slate-600 mb-1">Tên category</label>
-            <input
-              value={editCategoryName}
-              onChange={e => setEditCategoryName(e.target.value)}
-              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"
-              placeholder="Tên category…"
-            />
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Tên category <span className="text-red-500">*</span></label>
+              <input
+                value={editCategoryName}
+                onChange={e => setEditCategoryName(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"
+                placeholder="Tên category…"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Mentor (tùy chọn)</label>
+              <select value={editCategoryMentorId} onChange={e => setEditCategoryMentorId(e.target.value === '' ? '' : Number(e.target.value))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 bg-white">
+                <option value="">-- Chưa gán mentor --</option>
+                {mentors.map(m => <option key={m.id} value={m.id}>{m.fullName} ({m.email})</option>)}
+              </select>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Edit Budget Item modal */}
+      {editingBudgetItem && (
+        <Modal title="Sửa mục ngân sách" onClose={() => setEditingBudgetItem(null)} size="md"
+          footer={
+            <>
+              <button onClick={() => setEditingBudgetItem(null)} disabled={savingBudgetItem} className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-lg hover:bg-slate-50 disabled:opacity-50">Huỷ</button>
+              <button onClick={handleSaveBudgetItem} disabled={savingBudgetItem} className="px-4 py-2 bg-blue-800 hover:bg-blue-900 text-white text-sm font-semibold rounded-lg flex items-center gap-2 disabled:opacity-50">
+                {savingBudgetItem ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Lưu
+              </button>
+            </>
+          }
+        >
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Danh mục <span className="text-red-500">*</span></label>
+              <select value={editBiFields.categoryId} onChange={e => setEditBiFields(p => ({ ...p, categoryId: e.target.value === '' ? '' : Number(e.target.value) }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 bg-white">
+                <option value="">-- Chọn danh mục --</option>
+                {budgetCategories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Mô tả <span className="text-red-500">*</span></label>
+              <input value={editBiFields.description} onChange={e => setEditBiFields(p => ({ ...p, description: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"
+                placeholder="Mô tả mục ngân sách…" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Số lượng</label>
+                <input type="number" min={1} value={editBiFields.quantity === '' ? '' : editBiFields.quantity}
+                  onChange={e => setEditBiFields(p => ({ ...p, quantity: parseNumInput(e) }))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-700" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Đơn giá (VND)</label>
+                <input type="number" min={0} value={editBiFields.unitCost === '' ? '' : editBiFields.unitCost}
+                  onChange={e => setEditBiFields(p => ({ ...p, unitCost: parseNumInput(e) }))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-700" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Ghi chú</label>
+              <input value={editBiFields.notes} onChange={e => setEditBiFields(p => ({ ...p, notes: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"
+                placeholder="Ghi chú thêm (tùy chọn)…" />
+            </div>
           </div>
         </Modal>
       )}

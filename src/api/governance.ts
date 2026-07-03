@@ -40,3 +40,15 @@ export async function getBudgetCategories(): Promise<BudgetCategory[]> {
   const res = await apiClient.get<ApiResponse<BudgetCategory[]>>('/api/budget-categories');
   return res.data.data ?? [];
 }
+
+// Module 2 — User Directory: mentors active list for category assignment
+export interface Mentor {
+  id: number;
+  fullName: string;
+  email: string;
+}
+
+export async function getMentors(): Promise<Mentor[]> {
+  const res = await apiClient.get<ApiResponse<Mentor[]>>('/api/mentors');
+  return res.data.data ?? [];
+}
