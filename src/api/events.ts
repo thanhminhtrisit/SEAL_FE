@@ -100,8 +100,10 @@ export interface CriteriaSet {
   criteria?: CriterionItem[];
 }
 
-export async function getEvents(): Promise<EventSummary[]> {
-  const res = await apiClient.get<ApiResponse<EventSummary[]>>('/api/events');
+export async function getEvents(status?: EventStatus): Promise<EventSummary[]> {
+  const res = await apiClient.get<ApiResponse<EventSummary[]>>('/api/events', {
+    params: status ? { status } : undefined,
+  });
   return res.data.data ?? [];
 }
 

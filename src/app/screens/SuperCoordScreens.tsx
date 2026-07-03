@@ -1,15 +1,25 @@
-import React, { useState } from 'react';
-import { CheckSquare, XCircle, BookOpen, Target, BarChart3, Eye, ChevronDown, ChevronRight, AlertTriangle, TrendingUp, Calendar, Users, DollarSign, Filter, Download } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { CheckSquare, XCircle, BookOpen, Target, BarChart3, Eye, ChevronDown, ChevronRight, AlertTriangle, TrendingUp, Calendar, Users, DollarSign, Filter, Download, RefreshCw, ArrowLeft, List } from 'lucide-react';
+import { toast } from 'sonner';
 import { KPICard } from '../components/shared/KPICard';
 import { StatusBadge } from '../components/shared/Badge';
 import { Modal } from '../components/shared/Modal';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area } from 'recharts';
-
-const pendingApprovals = [
-  { id: 1, name: 'SEAL Software Engineering Hackathon Summer 2026', coordinator: 'Le Minh Cuong', discipline: 'Software Engineering', term: 'Summer 2026', status: 'PENDING_APPROVAL', submittedDate: '2026-06-10', budget: '45,000,000 VND', rounds: 2, categories: 3 },
-  { id: 2, name: 'FPT AI Innovation Challenge Fall 2026', coordinator: 'Nguyen Van Hoa', discipline: 'Artificial Intelligence', term: 'Fall 2026', status: 'PENDING_APPROVAL', submittedDate: '2026-06-08', budget: '38,000,000 VND', rounds: 2, categories: 3 },
-  { id: 3, name: 'IoT Smart City Hackathon Summer 2026', coordinator: 'Pham Thi Lan', discipline: 'IoT & Embedded', term: 'Summer 2026', status: 'PENDING_APPROVAL', submittedDate: '2026-06-05', budget: '27,500,000 VND', rounds: 1, categories: 2 },
-];
+import {
+  getEvents,
+  getEvent,
+  getEventRounds,
+  getEventCategories,
+  getEventCriteriaSets,
+  getBudget,
+  approveEvent,
+  rejectEvent,
+  type EventSummary,
+  type EventRound,
+  type EventCategory,
+  type CriteriaSet,
+  type BudgetResponse,
+} from '../../api/events';
 
 const disciplines = [
   { id: 1, name: 'Software Engineering', code: 'SE', status: 'ACTIVE', activeEvents: 1, totalTeams: 24, completedEvents: 8 },
@@ -81,19 +91,9 @@ export function SCDashboard() {
       <div className="grid grid-cols-3 gap-5">
         <div className="col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 p-5">
           <h3 className="font-semibold text-slate-900 mb-4" style={{ fontFamily: 'var(--font-display)' }}>Pending Event Approvals</h3>
-          <div className="space-y-3">
-            {pendingApprovals.map(ev => (
-              <div key={ev.id} className="flex items-center justify-between p-3 rounded-lg border border-slate-100 hover:border-blue-200 hover:bg-blue-50/30 transition-colors">
-                <div>
-                  <p className="text-sm font-semibold text-slate-900">{ev.name}</p>
-                  <p className="text-xs text-slate-500 mt-0.5">{ev.coordinator} · {ev.discipline} · {ev.budget}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <StatusBadge status="PENDING_APPROVAL" />
-                  <button className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg font-medium transition-colors">Review</button>
-                </div>
-              </div>
-            ))}
+          <div className="flex flex-col items-center justify-center py-8 text-slate-400 gap-2">
+            <CheckSquare className="w-8 h-8 opacity-30" />
+            <p className="text-sm">Truy cập <strong className="text-slate-600">Event Approvals</strong> để xem danh sách chờ duyệt.</p>
           </div>
         </div>
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
@@ -118,192 +118,445 @@ export function SCDashboard() {
 }
 
 export function EventApprovals({ onNavigate }: { onNavigate: (s: string) => void }) {
-  const [selectedEvent, setSelectedEvent] = useState<typeof pendingApprovals[0] | null>(null);
+  // Queue state
+  const [queue, setQueue] = useState<EventSummary[]>([]);
+  const [loadingQueue, setLoadingQueue] = useState(true);
+
+  // Detail panel state
+  const [selectedEvent, setSelectedEvent] = useState<EventSummary | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailRounds, setDetailRounds] = useState<EventRound[]>([]);
+  const [detailCategories, setDetailCategories] = useState<EventCategory[]>([]);
+  const [detailCriteriaSets, setDetailCriteriaSets] = useState<CriteriaSet[]>([]);
+  const [detailBudget, setDetailBudget] = useState<BudgetResponse | null>(null);
+  const [detailEvent, setDetailEvent] = useState<EventSummary | null>(null);
+  const [activeTab, setActiveTab] = useState('overview');
+
+  // Action state
   const [showApprove, setShowApprove] = useState(false);
   const [showReject, setShowReject] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
-  const [activeTab, setActiveTab] = useState('overview');
+  const [actioning, setActioning] = useState(false);
 
-  const budgetItems = [
-    { category: 'Prize', description: 'First Place Prize', qty: 1, unitCost: '15,000,000', amount: '15,000,000' },
-    { category: 'Prize', description: 'Second Place Prize', qty: 1, unitCost: '10,000,000', amount: '10,000,000' },
-    { category: 'Prize', description: 'Third Place Prize', qty: 1, unitCost: '5,000,000', amount: '5,000,000' },
-    { category: 'Catering', description: 'Event Day Meals & Drinks', qty: 1, unitCost: '8,000,000', amount: '8,000,000' },
-    { category: 'Honorarium', description: 'Guest Judge Honorarium', qty: 2, unitCost: '2,000,000', amount: '4,000,000' },
-    { category: 'Marketing', description: 'Posters & Online Promotion', qty: 1, unitCost: '3,000,000', amount: '3,000,000' },
-  ];
+  const loadQueue = async () => {
+    setLoadingQueue(true);
+    try {
+      const list = await getEvents('PENDING_APPROVAL');
+      setQueue(list);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Tải danh sách thất bại');
+    } finally {
+      setLoadingQueue(false);
+    }
+  };
+
+  useEffect(() => { loadQueue(); }, []);
+
+  const openDetail = async (ev: EventSummary) => {
+    setSelectedEvent(ev);
+    setActiveTab('overview');
+    setDetailLoading(true);
+    setDetailRounds([]);
+    setDetailCategories([]);
+    setDetailCriteriaSets([]);
+    setDetailBudget(null);
+    setDetailEvent(null);
+    try {
+      const [full, rounds, cats, csSets, budget] = await Promise.allSettled([
+        getEvent(ev.id),
+        getEventRounds(ev.id),
+        getEventCategories(ev.id),
+        getEventCriteriaSets(ev.id),
+        getBudget(ev.id),
+      ]);
+      if (full.status === 'fulfilled') setDetailEvent(full.value);
+      if (rounds.status === 'fulfilled') setDetailRounds(rounds.value);
+      if (cats.status === 'fulfilled') setDetailCategories(cats.value);
+      if (csSets.status === 'fulfilled') setDetailCriteriaSets(csSets.value);
+      if (budget.status === 'fulfilled') setDetailBudget(budget.value);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const handleApprove = async () => {
+    if (!selectedEvent) return;
+    setActioning(true);
+    try {
+      await approveEvent(selectedEvent.id);
+      toast.success(`Đã duyệt: ${selectedEvent.name}`);
+      setShowApprove(false);
+      setSelectedEvent(null);
+      await loadQueue();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Duyệt thất bại');
+    } finally {
+      setActioning(false);
+    }
+  };
+
+  const handleReject = async () => {
+    if (!selectedEvent || !rejectReason.trim()) return;
+    setActioning(true);
+    try {
+      await rejectEvent(selectedEvent.id, rejectReason.trim());
+      toast.success(`Đã từ chối: ${selectedEvent.name}`);
+      setShowReject(false);
+      setRejectReason('');
+      setSelectedEvent(null);
+      await loadQueue();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Từ chối thất bại');
+    } finally {
+      setActioning(false);
+    }
+  };
+
+  const ev = detailEvent ?? selectedEvent;
 
   return (
     <div className="p-7 space-y-5">
-      <PageHeader title="Event Approval Queue" subtitle={`${pendingApprovals.length} events awaiting review`} />
+      <PageHeader
+        title="Event Approval Queue"
+        subtitle={loadingQueue ? 'Đang tải…' : `${queue.length} event${queue.length !== 1 ? 's' : ''} chờ duyệt`}
+        actions={
+          <button onClick={loadQueue} disabled={loadingQueue}
+            className="flex items-center gap-1.5 border border-slate-200 text-slate-600 text-sm px-3 py-2 rounded-lg hover:bg-slate-50 disabled:opacity-50">
+            <RefreshCw className={`w-4 h-4 ${loadingQueue ? 'animate-spin' : ''}`} /> Tải lại
+          </button>
+        }
+      />
 
       {!selectedEvent ? (
+        /* ── Queue list ─────────────────────────────────────────── */
         <div className="bg-white rounded-xl shadow-sm border border-slate-200">
-          <table className="w-full">
-            <thead><tr className="border-b border-slate-100">
-              {['Event', 'Coordinator', 'Discipline', 'Term', 'Submitted', 'Budget', 'Status', 'Actions'].map(c => (
-                <th key={c} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>
-              ))}
-            </tr></thead>
-            <tbody className="divide-y divide-slate-100">
-              {pendingApprovals.map(ev => (
-                <tr key={ev.id} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-4 py-3">
-                    <p className="text-sm font-semibold text-slate-900">{ev.name}</p>
-                    <p className="text-xs text-slate-400">{ev.rounds} rounds · {ev.categories} categories</p>
-                  </td>
-                  <td className="px-4 py-3 text-sm text-slate-700">{ev.coordinator}</td>
-                  <td className="px-4 py-3 text-sm text-slate-700">{ev.discipline}</td>
-                  <td className="px-4 py-3 text-sm text-slate-700">{ev.term}</td>
-                  <td className="px-4 py-3 text-sm font-mono text-slate-500">{ev.submittedDate}</td>
-                  <td className="px-4 py-3 text-sm font-mono text-slate-700">{ev.budget}</td>
-                  <td className="px-4 py-3"><StatusBadge status={ev.status} /></td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-1.5">
-                      <button onClick={() => setSelectedEvent(ev)} className="text-xs bg-blue-50 text-blue-700 hover:bg-blue-100 px-3 py-1.5 rounded-lg font-medium transition-colors flex items-center gap-1"><Eye className="w-3 h-3" /> Review</button>
-                      <button onClick={() => { setSelectedEvent(ev); setShowApprove(true); }} className="text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 px-3 py-1.5 rounded-lg font-medium transition-colors">Approve</button>
-                      <button onClick={() => { setSelectedEvent(ev); setShowReject(true); }} className="text-xs bg-red-50 text-red-700 hover:bg-red-100 px-3 py-1.5 rounded-lg font-medium transition-colors">Reject</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {loadingQueue ? (
+            <div className="flex items-center justify-center py-16 gap-3 text-slate-400">
+              <RefreshCw className="w-5 h-5 animate-spin" />
+              <span className="text-sm">Đang tải danh sách…</span>
+            </div>
+          ) : queue.length === 0 ? (
+            <div className="text-center py-16 text-slate-400">
+              <CheckSquare className="w-10 h-10 mx-auto mb-3 opacity-30" />
+              <p className="text-sm font-medium">Không có event nào chờ duyệt</p>
+              <p className="text-xs mt-1">Mọi event đã được xử lý.</p>
+            </div>
+          ) : (
+            <table className="w-full">
+              <thead><tr className="border-b border-slate-100">
+                {['Event', 'Ngành', 'Đăng ký', 'Status', 'Thao tác'].map(c => (
+                  <th key={c} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>
+                ))}
+              </tr></thead>
+              <tbody className="divide-y divide-slate-100">
+                {queue.map(ev => (
+                  <tr key={ev.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-4 py-3">
+                      <p className="text-sm font-semibold text-slate-900">{ev.name}</p>
+                      <p className="text-xs text-slate-400 font-mono mt-0.5">{ev.eventType} · #{ev.id}</p>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-slate-600">{ev.disciplineName ?? '—'}</td>
+                    <td className="px-4 py-3 text-xs font-mono text-slate-500">
+                      {ev.registrationStart ? ev.registrationStart.slice(0, 10) : '—'} → {ev.registrationEnd ? ev.registrationEnd.slice(0, 10) : '—'}
+                    </td>
+                    <td className="px-4 py-3"><StatusBadge status={ev.status} /></td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={() => openDetail(ev)}
+                          className="text-xs bg-blue-50 text-blue-700 hover:bg-blue-100 px-3 py-1.5 rounded-lg font-medium transition-colors flex items-center gap-1">
+                          <Eye className="w-3 h-3" /> Xem chi tiết
+                        </button>
+                        <button onClick={() => { setSelectedEvent(ev); setShowApprove(true); }}
+                          className="text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 px-3 py-1.5 rounded-lg font-medium transition-colors">
+                          Duyệt
+                        </button>
+                        <button onClick={() => { setSelectedEvent(ev); setShowReject(true); }}
+                          className="text-xs bg-red-50 text-red-700 hover:bg-red-100 px-3 py-1.5 rounded-lg font-medium transition-colors">
+                          Từ chối
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       ) : (
+        /* ── Detail view ────────────────────────────────────────── */
         <div className="space-y-5">
-          <div className="flex items-center gap-3">
-            <button onClick={() => setSelectedEvent(null)} className="text-sm text-slate-500 hover:text-slate-700 flex items-center gap-1.5 transition-colors">← Back to queue</button>
-          </div>
+          <button onClick={() => setSelectedEvent(null)}
+            className="text-sm text-slate-500 hover:text-slate-700 flex items-center gap-1.5 transition-colors">
+            <ArrowLeft className="w-4 h-4" /> Quay lại danh sách
+          </button>
+
           <div className="bg-white rounded-xl shadow-sm border border-slate-200">
             <div className="px-6 py-5 border-b border-slate-100">
               <div className="flex items-start justify-between">
                 <div>
-                  <h2 className="text-lg font-bold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>{selectedEvent.name}</h2>
-                  <p className="text-sm text-slate-500 mt-1">Submitted by <strong>{selectedEvent.coordinator}</strong> · {selectedEvent.submittedDate}</p>
+                  <h2 className="text-lg font-bold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>
+                    {ev?.name ?? selectedEvent.name}
+                  </h2>
+                  <p className="text-sm text-slate-500 mt-1">
+                    {ev?.disciplineName && <span>{ev.disciplineName} · </span>}
+                    <span className="font-mono text-xs">{ev?.eventType}</span>
+                    {ev?.registrationStart && <span> · Đăng ký: {ev.registrationStart.slice(0, 10)}</span>}
+                  </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => setShowReject(true)} className="px-4 py-2 border border-red-200 text-red-600 text-sm font-medium rounded-lg hover:bg-red-50 transition-colors flex items-center gap-1.5"><XCircle className="w-4 h-4" /> Reject</button>
-                  <button onClick={() => setShowApprove(true)} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg transition-colors flex items-center gap-1.5"><CheckSquare className="w-4 h-4" /> Approve Event</button>
+                  <button onClick={() => setShowReject(true)}
+                    className="px-4 py-2 border border-red-200 text-red-600 text-sm font-medium rounded-lg hover:bg-red-50 transition-colors flex items-center gap-1.5">
+                    <XCircle className="w-4 h-4" /> Từ chối
+                  </button>
+                  <button onClick={() => setShowApprove(true)}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg transition-colors flex items-center gap-1.5">
+                    <CheckSquare className="w-4 h-4" /> Duyệt Event
+                  </button>
                 </div>
               </div>
               <div className="flex gap-1 mt-4">
-                {['overview', 'rounds', 'categories', 'criteria', 'budget', 'audit'].map(tab => (
+                {['overview', 'rounds', 'categories', 'criteria', 'budget'].map(tab => (
                   <button key={tab} onClick={() => setActiveTab(tab)}
                     className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors capitalize ${activeTab === tab ? 'bg-blue-800 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
-                    {tab === 'audit' ? 'Audit Trail' : tab}
+                    {tab === 'overview' ? 'Tổng quan' : tab === 'rounds' ? `Rounds (${detailRounds.length})` : tab === 'categories' ? `Categories (${detailCategories.length})` : tab === 'criteria' ? `Criteria (${detailCriteriaSets.length})` : `Budget`}
                   </button>
                 ))}
               </div>
             </div>
+
             <div className="p-6">
-              {activeTab === 'overview' && (
-                <div className="grid grid-cols-2 gap-6">
-                  <div className="space-y-4">
-                    {[['Event Type', 'SUMMER'], ['Discipline', selectedEvent.discipline], ['Term', selectedEvent.term], ['Registration Open', '2026-06-20'], ['Registration Close', '2026-06-30'], ['Event Start', '2026-07-15'], ['Event End', '2026-08-10']].map(([k, v]) => (
-                      <div key={k} className="flex justify-between py-2 border-b border-slate-100 last:border-0">
-                        <span className="text-sm text-slate-500">{k}</span>
-                        <span className="text-sm font-medium text-slate-900">{v}</span>
+              {detailLoading ? (
+                <div className="flex items-center justify-center py-12 gap-3 text-slate-400">
+                  <RefreshCw className="w-5 h-5 animate-spin" />
+                  <span className="text-sm">Đang tải chi tiết…</span>
+                </div>
+              ) : (
+                <>
+                  {activeTab === 'overview' && ev && (
+                    <div className="grid grid-cols-2 gap-6">
+                      <div className="space-y-0 divide-y divide-slate-100">
+                        {([
+                          ['Tên event', ev.name],
+                          ['Loại', ev.eventType],
+                          ['Ngành', ev.disciplineName ?? '—'],
+                          ['Đăng ký mở', ev.registrationStart?.slice(0, 10) ?? '—'],
+                          ['Đăng ký đóng', ev.registrationEnd?.slice(0, 10) ?? '—'],
+                          ['Max team size', ev.maxTeamSize != null ? String(ev.maxTeamSize) : '—'],
+                          ['Max teams', ev.maxTeams != null ? String(ev.maxTeams) : '—'],
+                          ['Max participants', ev.maxParticipants != null ? String(ev.maxParticipants) : '—'],
+                        ] as [string, string][]).map(([k, v]) => (
+                          <div key={k} className="flex justify-between py-2">
+                            <span className="text-sm text-slate-500">{k}</span>
+                            <span className="text-sm font-medium text-slate-900">{v}</span>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                  <div className="bg-slate-50 rounded-xl p-5">
-                    <h4 className="font-semibold text-slate-700 mb-3 text-sm">Event Description</h4>
-                    <p className="text-sm text-slate-600 leading-relaxed">A multi-round software engineering hackathon for FPT University HCMC students. Teams of 3–5 compete across three categories — Web Application, Mobile Application, and AI/Automation Tool — through a preliminary round and a final round judged by industry experts and faculty.</p>
-                  </div>
-                </div>
-              )}
-              {activeTab === 'budget' && (
-                <div>
-                  <table className="w-full mb-4">
-                    <thead><tr className="border-b border-slate-200">
-                      {['Category', 'Description', 'Qty', 'Unit Cost (VND)', 'Amount (VND)'].map(c => (
-                        <th key={c} className="text-left px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>
-                      ))}
-                    </tr></thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {budgetItems.map((item, i) => (
-                        <tr key={i} className="hover:bg-slate-50">
-                          <td className="px-3 py-2.5 text-sm text-slate-600">{item.category}</td>
-                          <td className="px-3 py-2.5 text-sm text-slate-900">{item.description}</td>
-                          <td className="px-3 py-2.5 text-sm text-slate-600 font-mono">{item.qty}</td>
-                          <td className="px-3 py-2.5 text-sm font-mono text-slate-700 text-right">{item.unitCost}</td>
-                          <td className="px-3 py-2.5 text-sm font-mono font-semibold text-slate-900 text-right">{item.amount}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot><tr className="border-t-2 border-slate-200 bg-slate-50">
-                      <td colSpan={4} className="px-3 py-2.5 text-sm font-bold text-slate-900">Total Estimated Cost</td>
-                      <td className="px-3 py-2.5 text-sm font-bold text-blue-800 font-mono text-right">45,000,000</td>
-                    </tr></tfoot>
-                  </table>
-                </div>
-              )}
-              {activeTab === 'rounds' && (
-                <div className="space-y-3">
-                  {[{ name: 'Preliminary Round', order: 1, deadline: '2026-07-25', promotionTopN: 6, isFinal: false }, { name: 'Final Round', order: 2, deadline: '2026-08-08', promotionTopN: 3, isFinal: true }].map(r => (
-                    <div key={r.name} className="p-4 rounded-lg border border-slate-200 flex items-center justify-between">
                       <div>
-                        <p className="text-sm font-semibold text-slate-900">Round {r.order}: {r.name}</p>
-                        <p className="text-xs text-slate-500 mt-0.5">Submission Deadline: {r.deadline} · Top {r.promotionTopN} promoted {r.isFinal && '· Final Round'}</p>
+                        <div className="grid grid-cols-3 gap-3 mb-4">
+                          <div className="bg-blue-50 rounded-lg p-3 text-center">
+                            <p className="text-xl font-bold text-blue-800">{detailRounds.length}</p>
+                            <p className="text-xs text-blue-600 mt-0.5">Rounds</p>
+                          </div>
+                          <div className="bg-violet-50 rounded-lg p-3 text-center">
+                            <p className="text-xl font-bold text-violet-800">{detailCategories.length}</p>
+                            <p className="text-xs text-violet-600 mt-0.5">Categories</p>
+                          </div>
+                          <div className="bg-emerald-50 rounded-lg p-3 text-center">
+                            <p className="text-xl font-bold text-emerald-800">{detailCriteriaSets.length}</p>
+                            <p className="text-xs text-emerald-600 mt-0.5">Criteria Sets</p>
+                          </div>
+                        </div>
+                        {detailBudget && (
+                          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                            <p className="text-xs font-semibold text-amber-700 mb-1">Tổng ngân sách ước tính</p>
+                            <p className="text-lg font-bold text-amber-900 font-mono">
+                              {detailBudget.totalEstimatedCost?.toLocaleString() ?? '—'} {detailBudget.currency}
+                            </p>
+                          </div>
+                        )}
+                        {ev.description && (
+                          <div className="mt-3 bg-slate-50 rounded-lg p-3">
+                            <p className="text-xs font-semibold text-slate-600 mb-1">Mô tả</p>
+                            <p className="text-sm text-slate-700 leading-relaxed">{ev.description}</p>
+                          </div>
+                        )}
                       </div>
-                      {r.isFinal && <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">Final</span>}
                     </div>
-                  ))}
-                </div>
-              )}
-              {activeTab === 'criteria' && (
-                <div>
-                  <table className="w-full">
-                    <thead><tr className="border-b border-slate-200">
-                      {['Criterion', 'Description', 'Max Score', 'Weight (%)'].map(c => (
-                        <th key={c} className="text-left px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>
+                  )}
+
+                  {activeTab === 'rounds' && (
+                    <div className="space-y-3">
+                      {detailRounds.length === 0 && <p className="text-sm text-slate-400 text-center py-6">Chưa có round nào.</p>}
+                      {detailRounds.map(r => (
+                        <div key={r.id} className="p-4 rounded-lg border border-slate-200">
+                          <div className="flex items-center justify-between mb-1">
+                            <p className="text-sm font-semibold text-slate-900">Round {r.orderNumber}: {r.name}</p>
+                            <div className="flex gap-1.5">
+                              {r.finalRound && <span className="text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">Final</span>}
+                              {r.requiresRepo && <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">Repo</span>}
+                              {r.requiresDemo && <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">Demo</span>}
+                              {r.requiresSlide && <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">Slide</span>}
+                              {r.requiresReport && <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">Report</span>}
+                            </div>
+                          </div>
+                          <p className="text-xs text-slate-500">
+                            {r.submissionDeadline && <>Submission: {r.submissionDeadline.slice(0, 10)} · </>}
+                            {r.scoringDeadline && <>Scoring: {r.scoringDeadline.slice(0, 10)} · </>}
+                            {r.promotionTopN != null && <>Top-{r.promotionTopN} promoted</>}
+                          </p>
+                        </div>
                       ))}
-                    </tr></thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {[['Technical Quality', 'Code quality, architecture, performance, scalability', '10', '40%'], ['Innovation', 'Originality, creative use of technology, novelty of approach', '10', '25%'], ['UI/UX Design', 'Interface usability, visual design, user experience quality', '10', '20%'], ['Presentation', 'Demo clarity, Q&A responses, communication', '10', '15%']].map(([name, desc, max, weight]) => (
-                        <tr key={name} className="hover:bg-slate-50">
-                          <td className="px-3 py-2.5 text-sm font-semibold text-slate-900">{name}</td>
-                          <td className="px-3 py-2.5 text-sm text-slate-600">{desc}</td>
-                          <td className="px-3 py-2.5 text-sm font-mono text-slate-700">{max}</td>
-                          <td className="px-3 py-2.5"><span className="text-sm font-mono font-bold text-blue-700">{weight}</span></td>
-                        </tr>
+                    </div>
+                  )}
+
+                  {activeTab === 'categories' && (
+                    <div className="space-y-2">
+                      {detailCategories.length === 0 && <p className="text-sm text-slate-400 text-center py-6">Chưa có category nào.</p>}
+                      {detailCategories.map(cat => (
+                        <div key={cat.id} className="flex items-center justify-between px-4 py-3 rounded-lg border border-slate-200">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900">{cat.name}</p>
+                            {cat.description && <p className="text-xs text-slate-500 mt-0.5">{cat.description}</p>}
+                          </div>
+                          {cat.mentorName && (
+                            <span className="text-xs bg-blue-50 text-blue-700 px-2 py-1 rounded-lg">{cat.mentorName}</span>
+                          )}
+                        </div>
                       ))}
-                    </tbody>
-                    <tfoot><tr className="border-t-2 border-slate-200 bg-slate-50">
-                      <td colSpan={3} className="px-3 py-2 text-sm font-bold text-slate-900">Total Weight</td>
-                      <td className="px-3 py-2"><span className="text-sm font-mono font-bold text-emerald-700">100%</span></td>
-                    </tr></tfoot>
-                  </table>
-                </div>
+                    </div>
+                  )}
+
+                  {activeTab === 'criteria' && (
+                    <div className="space-y-4">
+                      {detailCriteriaSets.length === 0 && <p className="text-sm text-slate-400 text-center py-6">Chưa có criteria set nào.</p>}
+                      {detailCriteriaSets.map(cs => {
+                        const roundName = detailRounds.find(r => r.id === cs.roundId)?.name;
+                        return (
+                          <div key={cs.id} className="rounded-lg border border-slate-200 overflow-hidden">
+                            <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-100 flex items-center gap-2 flex-wrap">
+                              <p className="text-sm font-semibold text-slate-800">{cs.name}</p>
+                              {roundName && <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">{roundName}</span>}
+                              <span className="text-[10px] bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full font-medium">
+                                {cs.categoryName ?? 'Chung cả vòng'}
+                              </span>
+                              {cs.promotionTopN != null && (
+                                <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">Top-{cs.promotionTopN}</span>
+                              )}
+                            </div>
+                            {cs.criteria && cs.criteria.length > 0 && (
+                              <table className="w-full">
+                                <thead><tr className="border-b border-slate-100">
+                                  {['Criterion', 'Max Score', 'Weight %'].map(h => (
+                                    <th key={h} className="text-left px-4 py-2 text-xs font-semibold text-slate-500">{h}</th>
+                                  ))}
+                                </tr></thead>
+                                <tbody className="divide-y divide-slate-50">
+                                  {cs.criteria.map(cr => (
+                                    <tr key={cr.id}>
+                                      <td className="px-4 py-2 text-xs text-slate-800 font-medium">{cr.name}</td>
+                                      <td className="px-4 py-2 text-xs font-mono text-slate-600">{cr.maxScore}</td>
+                                      <td className="px-4 py-2 text-xs font-mono text-slate-600">{cr.weight}%</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {activeTab === 'budget' && (
+                    <div>
+                      {!detailBudget ? (
+                        <p className="text-sm text-slate-400 text-center py-6">Chưa có budget.</p>
+                      ) : (
+                        <>
+                          <table className="w-full mb-4">
+                            <thead><tr className="border-b border-slate-200">
+                              {['Mô tả', 'SL', 'Đơn giá (VND)', 'Thành tiền (VND)'].map(c => (
+                                <th key={c} className="text-left px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>
+                              ))}
+                            </tr></thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {(detailBudget.items ?? []).map(item => (
+                                <tr key={item.id} className="hover:bg-slate-50">
+                                  <td className="px-3 py-2.5 text-sm text-slate-900">{item.description}</td>
+                                  <td className="px-3 py-2.5 text-sm font-mono text-slate-600">{item.quantity}</td>
+                                  <td className="px-3 py-2.5 text-sm font-mono text-slate-700 text-right">{item.unitCost.toLocaleString()}</td>
+                                  <td className="px-3 py-2.5 text-sm font-mono font-semibold text-slate-900 text-right">
+                                    {(item.quantity * item.unitCost).toLocaleString()}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                            <tfoot><tr className="border-t-2 border-slate-200 bg-slate-50">
+                              <td colSpan={3} className="px-3 py-2.5 text-sm font-bold text-slate-900">Tổng ước tính</td>
+                              <td className="px-3 py-2.5 text-sm font-bold text-blue-800 font-mono text-right">
+                                {detailBudget.totalEstimatedCost?.toLocaleString() ?? '—'} {detailBudget.currency}
+                              </td>
+                            </tr></tfoot>
+                          </table>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>
         </div>
       )}
 
-      {showApprove && (
-        <Modal title="Approve Event" subtitle={selectedEvent?.name} onClose={() => setShowApprove(false)} size="sm"
-          footer={<><button onClick={() => setShowApprove(false)} className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-lg hover:bg-slate-50">Cancel</button><button onClick={() => setShowApprove(false)} className="px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700">Confirm Approval</button></>}>
+      {/* Approve confirm modal */}
+      {showApprove && selectedEvent && (
+        <Modal title="Duyệt Event" subtitle={selectedEvent.name} onClose={() => setShowApprove(false)} size="sm"
+          footer={
+            <>
+              <button onClick={() => setShowApprove(false)} disabled={actioning}
+                className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-lg hover:bg-slate-50 disabled:opacity-50">Huỷ</button>
+              <button onClick={handleApprove} disabled={actioning}
+                className="px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-2">
+                {actioning ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckSquare className="w-4 h-4" />} Xác nhận duyệt
+              </button>
+            </>
+          }>
           <div className="space-y-3">
-            <p className="text-sm text-slate-600">You are about to <strong>approve</strong> this event. The Event Coordinator will be notified and may proceed to open registration.</p>
-            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
-              <p className="text-sm font-semibold text-emerald-800">✓ Budget of 45,000,000 VND will be authorized</p>
-              <p className="text-sm text-emerald-700 mt-1">2 rounds and 3 categories confirmed</p>
+            <p className="text-sm text-slate-600">Bạn sắp <strong>duyệt</strong> event này. Coordinator sẽ được thông báo và có thể mở đăng ký.</p>
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm text-emerald-700">
+              {detailRounds.length > 0 && <p>{detailRounds.length} round · {detailCategories.length} category · {detailCriteriaSets.length} criteria set</p>}
+              {detailBudget?.totalEstimatedCost != null && <p className="font-semibold mt-1">Ngân sách: {detailBudget.totalEstimatedCost.toLocaleString()} {detailBudget.currency}</p>}
             </div>
-            <div><label className="block text-sm font-medium text-slate-700 mb-1">Approval Notes (optional)</label>
-              <textarea className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-emerald-600" rows={3} placeholder="Add any conditions or notes for the coordinator…" /></div>
           </div>
         </Modal>
       )}
-      {showReject && (
-        <Modal title="Reject Event" subtitle={selectedEvent?.name} onClose={() => setShowReject(false)} size="sm"
-          footer={<><button onClick={() => setShowReject(false)} className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-lg hover:bg-slate-50">Cancel</button><button disabled={!rejectReason.trim()} onClick={() => setShowReject(false)} className="px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed">Reject Event</button></>}>
+
+      {/* Reject modal */}
+      {showReject && selectedEvent && (
+        <Modal title="Từ chối Event" subtitle={selectedEvent.name} onClose={() => { setShowReject(false); setRejectReason(''); }} size="sm"
+          footer={
+            <>
+              <button onClick={() => { setShowReject(false); setRejectReason(''); }} disabled={actioning}
+                className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-lg hover:bg-slate-50 disabled:opacity-50">Huỷ</button>
+              <button disabled={!rejectReason.trim() || actioning} onClick={handleReject}
+                className="px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+                {actioning ? <RefreshCw className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />} Từ chối Event
+              </button>
+            </>
+          }>
           <div className="space-y-3">
-            <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2"><AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" /><p className="text-sm text-red-700">The coordinator will be notified with your rejection reason and may revise and resubmit the event.</p></div>
-            <div><label className="block text-sm font-medium text-slate-700 mb-1">Rejection Reason <span className="text-red-500">*</span></label>
-              <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-red-500" rows={4} placeholder="Provide a clear, actionable reason so the coordinator can revise and resubmit…" /></div>
-            {!rejectReason.trim() && <p className="text-xs text-red-500">Rejection reason is required.</p>}
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
+              <p className="text-sm text-red-700">Coordinator sẽ nhận lý do từ chối và có thể chỉnh sửa rồi nộp lại.</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Lý do từ chối <span className="text-red-500">*</span></label>
+              <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-red-500"
+                rows={4} placeholder="Nêu rõ lý do để coordinator có thể chỉnh sửa và nộp lại…" />
+            </div>
+            {!rejectReason.trim() && <p className="text-xs text-red-500">Lý do từ chối là bắt buộc.</p>}
           </div>
         </Modal>
       )}
