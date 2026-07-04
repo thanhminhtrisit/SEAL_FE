@@ -632,7 +632,7 @@ export function JudgeScoringPage() {
 
   return (
     <div className="p-7 space-y-5">
-      <PageHeader title="Score Submission" subtitle="Real evaluation flow with audit logs" />
+      <PageHeader title="Score Entry" subtitle="Chọn đúng bài nộp để biết rõ Event, Round, Category và Team đang được chấm" />
 
       <div className="grid grid-cols-3 gap-5">
         <div className="col-span-2 space-y-5">
@@ -677,8 +677,8 @@ export function JudgeScoringPage() {
                 <h3 className="font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>Scorecard</h3>
                 <p className="text-sm text-slate-500">
                   {selectedSubmission
-                    ? `${selectedSubmission.teamName} · ${selectedSubmission.roundName}`
-                    : 'Select an assignment to begin'}
+                    ? `${selectedSubmission.eventName} • ${selectedSubmission.roundName} • ${selectedSubmission.categoryName} • ${selectedSubmission.teamName}`
+                    : 'Chọn một assignment để bắt đầu'}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -688,11 +688,11 @@ export function JudgeScoringPage() {
             </div>
 
             {!selectedSubmission ? (
-              <p className="text-sm text-slate-500">Please choose an assignment from the left panel.</p>
+              <p className="text-sm text-slate-500">Hãy chọn một assignment ở cột bên trái để biết bạn đang chấm bài nào.</p>
             ) : !evaluation ? (
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
                 <p className="text-sm text-slate-600">
-                  This submission has not been started yet. Click the action button above to create the evaluation draft.
+                  Bài nộp này chưa được bắt đầu chấm. Bấm nút bên dưới để tạo scorecard cho đúng bài đang chọn.
                 </p>
                 <button
                   onClick={() => void openScorecard(selectedSubmission)}
@@ -706,17 +706,31 @@ export function JudgeScoringPage() {
             ) : (
               <div className="space-y-5">
                 <div className="grid grid-cols-3 gap-4">
-                  <MetricPill label="Team" value={evaluation.teamName ?? selectedSubmission.teamName} />
+                  <MetricPill label="Event" value={evaluation.eventName ?? selectedSubmission.eventName} />
+                  <MetricPill label="Round" value={selectedSubmission.roundName} />
                   <MetricPill label="Category" value={evaluation.categoryName ?? selectedSubmission.categoryName} />
+                  <MetricPill label="Team" value={evaluation.teamName ?? selectedSubmission.teamName} />
+                  <MetricPill label="Submission" value={`#${evaluation.submissionId}`} />
+                  <MetricPill label="Attempt" value={`v${evaluation.attemptNumber ?? selectedSubmission.attemptNumber}`} />
+                  <MetricPill label="Evaluation" value={`#${evaluation.id}`} />
+                  <MetricPill label="Judge" value={`#${evaluation.judgeId}`} />
                   <MetricPill label="Status" value={evaluation.status} />
                 </div>
 
                 <div className="rounded-xl border border-slate-200 p-4 bg-slate-50">
+                  <div className="mb-4 space-y-1">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Bạn đang chấm bài</p>
+                    <p className="text-sm text-slate-700">Event: <span className="font-semibold text-slate-900">{evaluation.eventName ?? selectedSubmission.eventName}</span></p>
+                    <p className="text-sm text-slate-700">Round: <span className="font-semibold text-slate-900">{selectedSubmission.roundName}</span></p>
+                    <p className="text-sm text-slate-700">Category: <span className="font-semibold text-slate-900">{evaluation.categoryName ?? selectedSubmission.categoryName}</span></p>
+                    <p className="text-sm text-slate-700">Team: <span className="font-semibold text-slate-900">{evaluation.teamName ?? selectedSubmission.teamName}</span></p>
+                  </div>
+
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div>
                       <p className="text-xs text-slate-500">Repository</p>
                       <a href={evaluation.repoUrl ?? selectedSubmission.repoUrl ?? '#'} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-blue-700 hover:underline break-all">
-                        <ExternalLink className="w-3.5 h-3.5" /> {evaluation.repoUrl ?? selectedSubmission.repoUrl ?? '—'}
+                        <ExternalLink className="w-3.5 h-3.5" /> {evaluation.repoUrl ?? selectedSubmission.repoUrl ?? '?'}
                       </a>
                     </div>
                     <div>
@@ -731,7 +745,7 @@ export function JudgeScoringPage() {
                           <ExternalLink className="w-3.5 h-3.5" /> {evaluation.demoUrl ?? selectedSubmission.demoUrl}
                         </a>
                       ) : (
-                        <p className="text-slate-700 break-all">—</p>
+                        <p className="text-slate-700 break-all">?</p>
                       )}
                       {evaluation.slideUrl ?? selectedSubmission.slideUrl ? (
                         <a
@@ -743,12 +757,11 @@ export function JudgeScoringPage() {
                           <ExternalLink className="w-3.5 h-3.5" /> {evaluation.slideUrl ?? selectedSubmission.slideUrl}
                         </a>
                       ) : (
-                        <p className="text-slate-700 break-all mt-1">—</p>
+                        <p className="text-slate-700 break-all mt-1">?</p>
                       )}
                     </div>
                   </div>
                 </div>
-
                 <div className="space-y-4">
                   {currentCriteria.map(criterion => {
                     const draft = draftScores[criterion.criterionId] ?? { scoreValue: '', comment: '' };
