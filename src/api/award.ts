@@ -14,6 +14,11 @@ export const award = {
     return response.data.data;
   },
 
+  getAwardTypes: async () => {
+    const response = await apiClient.get<ApiResponse<Array<{ code: string; label: string; isMainAward: boolean }>>>(`api/awards/types`);
+    return response.data.data;
+  },
+
   createAward: async (request: AwardCreateRequest): Promise<AwardResponse> => {
     const response = await apiClient.post<ApiResponse<AwardResponse>>(`api/awards`, request);
     return response.data.data;

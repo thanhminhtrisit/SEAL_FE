@@ -8,13 +8,14 @@ export const AwardsPage: React.FC = () => {
   const [categories, setCategories] = useState<any[]>([]); 
   const [eligibleTeams, setEligibleTeams] = useState<any[]>([]); 
   const [awards, setAwards] = useState<AwardResponse[]>([]);
+  const [awardTypes, setAwardTypes] = useState<Array<{ code: string; label: string; isMainAward: boolean }>>([]);
   
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>(''); 
   const [teamId, setTeamId] = useState<string>('');
-  const [awardType, setAwardType] = useState<string>('FIRST_PLACE');
+  const [awardType, setAwardType] = useState<string>('');
   const [description, setDescription] = useState<string>('');
 
   const getErrorMessage = (err: unknown) => {
@@ -30,6 +31,19 @@ export const AwardsPage: React.FC = () => {
 
   // 1. Tải danh sách sự kiện khi mount component
   useEffect(() => {
+    const loadAwardTypes = async () => {
+      try {
+        const data = await award.getAwardTypes();
+        const options = data || [];
+        setAwardTypes(options);
+        if (options.length > 0) {
+          setAwardType(current => current || options[0].code);
+        }
+      } catch (err) {
+        console.error('Lỗi tải danh sách loại giải:', err);
+      }
+    };
+
     const loadAllEvents = async () => {
       try {
         const data = await award.getEvents();
@@ -38,6 +52,8 @@ export const AwardsPage: React.FC = () => {
         console.error('Lỗi tải danh sách sự kiện:', err);
       }
     };
+
+    loadAwardTypes();
     loadAllEvents();
   }, []);
 
@@ -101,7 +117,7 @@ export const AwardsPage: React.FC = () => {
 
   const handleSubmitAward = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedEventId || !selectedCategoryId || !teamId) {
+    if (!selectedEventId || !selectedCategoryId || !teamId || !awardType) {
       alert('Vui lòng điền đầy đủ các thông tin bắt buộc!');
       return;
     }
@@ -220,13 +236,16 @@ export const AwardsPage: React.FC = () => {
                 value={awardType}
                 onChange={(e) => setAwardType(e.target.value)}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm bg-white"
+                disabled={awardTypes.length === 0}
               >
-                <option value="FIRST_PLACE">FIRST PLACE (Giải Nhất)</option>
-                <option value="SECOND_PLACE">SECOND PLACE (Giải Nhì)</option>
-                <option value="THIRD_PLACE">THIRD PLACE (Giải Ba)</option>
-                <option value="BEST_TECHNICAL">BEST TECHNICAL (Giải Kỹ Thuật)</option>
-                <option value="BEST_PRESENTATION">BEST PRESENTATION (Giải Thuyết Trình)</option>
-                <option value="SPECIAL">SPECIAL (Giải Khuyến Khích)</option>
+                <option value="" disabled>
+                  {awardTypes.length === 0 ? 'Đang tải danh sách giải thưởng...' : '-- Chọn loại giải thưởng --'}
+                </option>
+                {awardTypes.map((type) => (
+                  <option key={type.code} value={type.code}>
+                    {type.code} ({type.label})
+                  </option>
+                ))}
               </select>
             </div>
 

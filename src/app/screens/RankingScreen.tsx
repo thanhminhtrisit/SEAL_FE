@@ -7,39 +7,39 @@ interface RankingScreenProps {
 }
 
 export const RankingScreen: React.FC<RankingScreenProps> = ({ isCoordinator = true }) => {
-  // --- TẦNG 1: STATE QUẢN LÝ EVENT & CATEGORY KHỞI TẠO ---
+  // STATE QUẢN LÝ EVENT & CATEGORY KHỞI TẠO
   const [events, setEvents] = useState<{id: number, name: string}[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
   
-  // STATE MỚI: Danh sách danh mục được tải độc lập theo Event
+  // Danh sách danh mục được tải độc lập theo Event
   const [categories, setCategories] = useState<{id: number, name: string}[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | 'ALL'>('ALL');
 
-  // --- TẦNG 2: STATE QUẢN LÝ ROUND (TABS) ---
+  // STATE QUẢN LÝ ROUND (TABS)
   const [rounds, setRounds] = useState<{id: number, name: string}[]>([]);
   const [activeRoundId, setActiveRoundId] = useState<number | null>(null);
 
-  // --- TẦNG 3: STATE QUẢN LÝ RANKING ---
+  // STATE QUẢN LÝ RANKING
   const [rankings, setRankings] = useState<RankingResponse[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  // --- STATE QUẢN LÝ TÁC VỤ THỦ CÔNG ---
+  // STATE QUẢN LÝ TÁC VỤ THỦ CÔNG
   const [selectedTeamIds, setSelectedTeamIds] = useState<number[]>([]);
   const [isPromoting, setIsPromoting] = useState<boolean>(false);
 
-  // State cho Modal Disqualify
+  // STATE QUẢN LÝ ĐÌNH CHỈ ĐỘI THI
   const [disqualifyData, setDisqualifyData] = useState<{ teamId: number, teamName: string } | null>(null);
   const [disqualifyReason, setDisqualifyReason] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [isPublished, setIsPublished] = useState<boolean>(false);
   
-  // State cho Modal Xem Blacklist
+  // STATE QUẢN LÝ MODAL XEM DANH SÁCH ĐÌNH CHỈ
   const [isDisqualifiedModalOpen, setIsDisqualifiedModalOpen] = useState(false);
   const [disqualifiedTeams, setDisqualifiedTeams] = useState<any[]>([]);
   const [isLoadingBlacklist, setIsLoadingBlacklist] = useState(false);
 
-  // --- LUỒNG 1: CHẠY NGAY KHI VÀO TRANG -> TẢI DANH SÁCH EVENT ---
+  // LUỒNG 1: CHẠY NGAY KHI VÀO TRANG -> TẢI DANH SÁCH EVENT 
   useEffect(() => {
     const fetchInitialEvents = async () => {
       try {
@@ -55,7 +55,7 @@ export const RankingScreen: React.FC<RankingScreenProps> = ({ isCoordinator = tr
     fetchInitialEvents();
   }, []);
 
-  // --- LUỒNG 2: KHI EVENT THAY ĐỔI -> TẢI LẠI ROUNDS VÀ CATEGORIES ---
+  // LUỒNG 2: KHI EVENT THAY ĐỔI -> TẢI LẠI ROUNDS VÀ CATEGORIES 
   useEffect(() => {
     const fetchEventData = async () => {
       if (!selectedEventId) return;
@@ -85,7 +85,7 @@ export const RankingScreen: React.FC<RankingScreenProps> = ({ isCoordinator = tr
     fetchEventData();
   }, [selectedEventId]);
 
-  // --- LUỒNG 3: KHI ĐỔI ROUND -> TẢI LẠI BẢNG XẾP HẠNG TỔNG ---
+  // LUỒNG 3: KHI ĐỔI ROUND -> TẢI LẠI BẢNG XẾP HẠNG TỔNG 
   useEffect(() => {
     if (activeRoundId !== null) {
       fetchRankings(activeRoundId);
@@ -183,7 +183,7 @@ export const RankingScreen: React.FC<RankingScreenProps> = ({ isCoordinator = tr
     }
   };
 
-  // --- LỌC UI THEO CATEGORY ID ---
+  //  LỌC UI THEO CATEGORY ID 
   const filteredRankings = useMemo(() => {
     if (selectedCategoryId === 'ALL') return rankings;
     
@@ -287,17 +287,6 @@ export const RankingScreen: React.FC<RankingScreenProps> = ({ isCoordinator = tr
                     className="flex-1 sm:flex-none px-4 py-2 font-semibold text-red-600 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition-all whitespace-nowrap"
                 >
                     📋 Đội đình chỉ
-                </button>
-
-               <button 
-                  onClick={handleComputeRanking}
-                  disabled={isLoading || !activeRoundId || (categories.length > 0 && selectedCategoryId === 'ALL')}
-                  className={`flex-1 sm:flex-none px-4 py-2 font-semibold text-white rounded-md transition-all whitespace-nowrap
-                    ${(isLoading || !activeRoundId || (categories.length > 0 && selectedCategoryId === 'ALL')) 
-                      ? 'bg-blue-300 cursor-not-allowed' 
-                      : 'bg-blue-600 hover:bg-blue-700 shadow-sm'}`}
-                >
-                  {isLoading ? 'Đang xử lý...' : 'Tính toán Xếp hạng'}
                 </button>
               </div>
             )}
