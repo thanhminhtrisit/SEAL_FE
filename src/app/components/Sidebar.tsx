@@ -64,7 +64,7 @@ const navConfig: Record<Role, NavSection[]> = {
     {
       title: 'Approvals',
       items: [
-        { label: 'Event Approvals', icon: CheckSquare, screen: 'sc-approvals', badge: 3 },
+        { label: 'Event Approvals', icon: CheckSquare, screen: 'sc-approvals' },
       ],
     },
   ],
