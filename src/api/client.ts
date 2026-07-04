@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import axios, { AxiosError } from 'axios';
 import type { ApiResponse } from './types';
 

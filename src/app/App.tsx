@@ -16,7 +16,7 @@ import { SCDashboard, EventApprovals, SCAnalytics, Disciplines, TermQuotas } fro
 
 // Coordinator screens
 import {
-  CoordDashboard, EventList, CreateEventWizard, ParticipantApproval,
+  CoordDashboard, EventList, CreateEventWizard,
   SubmissionMonitor, JudgeAssignment, TeamManagement, AccountApprovalsPage,
   EventDetailPage,
 } from './screens/CoordinatorScreens';
@@ -67,7 +67,6 @@ const breadcrumbs: Record<string, string[]> = {
   'coord-dashboard': ['SEAL', 'Coordinator', 'Dashboard'],
   'coord-events': ['SEAL', 'Coordinator', 'My Events'],
   'coord-create': ['SEAL', 'Coordinator', 'Create Event'],
-  'coord-participants': ['SEAL', 'Coordinator', 'Participant Approval'],
   'coord-account-approvals': ['SEAL', 'Coordinator', 'Account Approvals'],
   'coord-event-detail': ['SEAL', 'Coordinator', 'Event Detail'],
   'coord-teams': ['SEAL', 'Coordinator', 'Teams'],
@@ -117,7 +116,7 @@ const ROLE_ALLOWED_SCREENS: Record<Role, ReadonlySet<string>> = {
   ADMIN: new Set(['admin-dashboard', 'admin-staff', 'admin-audit', 'admin-config', 'admin-security', 'admin-roles', ...sharedScreens]),
   SUPER_COORDINATOR: new Set(['sc-dashboard', 'sc-disciplines', 'sc-quotas', 'sc-approvals', 'sc-analytics', ...sharedScreens]),
   EVENT_COORDINATOR: new Set([
-    'coord-dashboard', 'coord-events', 'coord-create', 'coord-participants',
+    'coord-dashboard', 'coord-events', 'coord-create',
     'coord-account-approvals', 'coord-event-detail', 'coord-teams', 'coord-judges',
     'coord-submissions', 'coord-scoring', 'coord-ranking', 'coord-awards',
     'coord-results', 'coord-rbl', 'templates-criteria', ...sharedScreens,
@@ -336,7 +335,7 @@ function ScreenRenderer({ screen, role, onNavigate, selectedEventId, onSelectEve
     case 'coord-dashboard': return <CoordDashboard onNavigate={onNavigate} />;
     case 'coord-events': return <EventList onNavigate={onNavigate} onSelectEvent={onSelectEvent} />;
     case 'coord-create': return <CreateEventWizard onNavigate={onNavigate} onSelectEvent={onSelectEvent} />;
-    case 'coord-participants': return <ParticipantApproval />;
+    case 'coord-participants': return <AccountApprovalsPage />;
     case 'coord-account-approvals': return <AccountApprovalsPage />;
     case 'coord-event-detail': return selectedEventId
       ? <EventDetailPage eventId={selectedEventId} onNavigate={onNavigate} />

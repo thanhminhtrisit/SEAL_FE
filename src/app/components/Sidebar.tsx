@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   LayoutDashboard, Users, Shield, Settings, FileText, BarChart3,
   Calendar, CheckSquare, BookOpen, Layers, Award, ClipboardList,
-  UserCheck, Gavel, TrendingUp, Target, Send, Eye, GitBranch,
+  Gavel, TrendingUp, Target, Send, Eye, GitBranch,
   Database, Lock, Bell, ChevronRight, PanelLeftClose, PanelLeftOpen,
   Code2, Briefcase, FolderOpen, Activity, Globe, FileBarChart, Zap,
   UserPlus, ServerCog, AlertTriangle, Star, Trophy, FilePen, Inbox
@@ -81,7 +81,6 @@ const navConfig: Record<Role, NavSection[]> = {
       title: 'Event Operations',
       items: [
         { label: 'Account Approvals', icon: UserPlus, screen: 'coord-account-approvals' },
-        { label: 'Participant Approval', icon: UserCheck, screen: 'coord-participants', badge: 7 },
         { label: 'Teams', icon: Users, screen: 'coord-teams' },
         { label: 'Judge Assignment', icon: Gavel, screen: 'coord-judges' },
         { label: 'Submissions', icon: Send, screen: 'coord-submissions' },

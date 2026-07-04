@@ -6,6 +6,8 @@ export interface TeamMember {
   fullName: string;
   email: string;
   role: 'LEADER' | 'MEMBER';
+  status?: string;
+  joinedAt?: string;
 }
 
 export interface TeamDetail {
@@ -17,6 +19,11 @@ export interface TeamDetail {
   categoryName?: string | null;
   eventId?: number | null;
   eventName?: string | null;
+  leaderId?: number | null;
+  leaderName?: string | null;
+  rejectionReason?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
   members: TeamMember[];
 }
 
