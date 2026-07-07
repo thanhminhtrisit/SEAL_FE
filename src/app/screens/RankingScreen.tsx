@@ -154,25 +154,31 @@ export const RankingScreen: React.FC<RankingScreenProps> = ({ isCoordinator = tr
     }
   };
 
-  const handleConfirmDisqualify = async () => {
-    if (!disqualifyReason.trim() || !activeRoundId) {
-      alert('Vui lòng nhập lý do đình chỉ để lưu vào Audit Log!');
-      return;
-    }
+const handleConfirmDisqualify = async () => {
+  if (!disqualifyReason.trim() || !activeRoundId) {
+    alert('Vui lòng nhập lý do đình chỉ để lưu vào Audit Log!');
+    return;
+  }
+  
+  setIsSubmitting(true);
+  try {
+    // Gọi API đình chỉ
+    await ranking.disqualifyTeam(disqualifyData!.teamId, disqualifyReason);
+    alert(`Đã đình chỉ thành công đội ${disqualifyData!.teamName}.`);
     
-    setIsSubmitting(true);
-    try {
-      await ranking.disqualifyTeam(disqualifyData!.teamId, disqualifyReason);
-      alert(`Đã đình chỉ thành công đội ${disqualifyData!.teamName}.`);
-      setDisqualifyData(null);
-      setDisqualifyReason('');
-      await handleComputeRanking(); 
-    } catch (err: any) {
-      alert('Có lỗi xảy ra khi đình chỉ đội thi.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+    // Đóng Modal
+    setDisqualifyData(null);
+    setDisqualifyReason('');
+    
+    
+    await handleComputeRanking(); // Tính toán lại bảng xếp hạng sau khi đình chỉ
+    
+  } catch (err: any) {
+    alert('Có lỗi xảy ra khi đình chỉ đội thi.');
+  } finally {
+    setIsSubmitting(false);
+  }
+};
 
   const handleViewDisqualified = async () => {
     if (!selectedEventId) return;
