@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { award } from '../../api/award';
 import { AwardResponse } from '../../app/types';
+import { toast } from 'sonner';
 
 export const AwardsPage: React.FC = () => {
   const [selectedEventId, setSelectedEventId] = useState<string>(''); 
@@ -9,7 +10,9 @@ export const AwardsPage: React.FC = () => {
   const [eligibleTeams, setEligibleTeams] = useState<any[]>([]); 
   const [awards, setAwards] = useState<AwardResponse[]>([]);
   const [awardTypes, setAwardTypes] = useState<Array<{ code: string; label: string; isMainAward: boolean }>>([]);
-  
+  const [suggestedWinners, setSuggestedWinners] = useState<any[]>([]);
+  const [isBatchProcessing, setIsBatchProcessing] = useState<boolean>(false);
+
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -81,11 +84,18 @@ export const AwardsPage: React.FC = () => {
   useEffect(() => {
     if (selectedEventId && selectedCategoryId) {
       loadEligibleTeams(Number(selectedEventId), Number(selectedCategoryId));
+      loadSuggestions(Number(selectedEventId), Number(selectedCategoryId)); // Load gợi ý
     } else {
       setEligibleTeams([]);
       setTeamId('');
+      setSuggestedWinners([]);
     }
   }, [selectedEventId, selectedCategoryId]);
+
+  const loadSuggestions = async (eId: number, cId: number) => {
+    const data = await award.getSuggestedAwards(eId, cId);
+    setSuggestedWinners(data || []);
+  };
 
   const loadAwards = async (eId: number) => {
     try {
@@ -147,6 +157,38 @@ export const AwardsPage: React.FC = () => {
     }
   };
 
+  const handleBatchAward = async () => {
+    if (suggestedWinners.length === 0) return;
+    
+    if (!confirm(`Bạn có chắc chắn muốn chốt giải thưởng cho ${suggestedWinners.length} đội thi này?`)) {
+      return;
+    }
+
+    setIsBatchProcessing(true);
+    try {
+      // Dùng Promise.all để gửi request nhanh hơn thay vì dùng vòng lặp for đơn thuần
+      await Promise.all(suggestedWinners.map(win => 
+        award.createAward({
+          eventId: Number(selectedEventId),
+          categoryId: Number(selectedCategoryId),
+          teamId: win.teamId,
+          rankingId: null,
+          awardType: win.suggestedAwardType,
+          description: 'Giải thưởng tự động từ hệ thống'
+        })
+      ));
+
+      toast.success("Đã chốt giải thưởng cho Top 3 thành công!");
+      // Reset và tải lại dữ liệu
+      setSuggestedWinners([]); 
+      loadAwards(Number(selectedEventId));
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
+
   const getAwardBadgeStyle = (type: string) => {
     switch (type) {
       case 'FIRST_PLACE': return 'bg-yellow-100 text-yellow-800 border-yellow-300';
@@ -167,7 +209,7 @@ export const AwardsPage: React.FC = () => {
         {/* CỘT TẠO GIẢI THƯỞNG */}
         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm h-fit">
           <h2 className="text-lg font-bold text-slate-800 mb-4">Cấp Giải Thưởng Mới</h2>
-          
+
           {error && <div className="p-3 mb-4 text-sm text-red-700 bg-red-50 rounded-lg border border-red-200">{error}</div>}
 
           <form onSubmit={handleSubmitAward} className="space-y-4">
@@ -270,6 +312,56 @@ export const AwardsPage: React.FC = () => {
               {isLoading ? 'Đang hệ thống hóa...' : 'Xác Nhận Trao Giải'}
             </button>
           </form>
+          {/* KHỐI PREVIEW GỢI Ý TOP 3 */}
+          {suggestedWinners.length > 0 && (
+            <div className="mt-6 p-4 bg-emerald-50 rounded-xl border border-emerald-200">
+              <div className="flex flex-col gap-3">
+                
+                {/* Header của khối Preview */}
+                <div className="mb-3">
+                  <h3 className="font-bold text-emerald-900">Preview Giải Thưởng (Top 3)</h3>
+                </div>
+
+                {/* Danh sách các đội được gợi ý */}
+                <div className="space-y-2">
+                  {suggestedWinners.map((win) => (
+                    <div key={win.teamId} className="flex justify-between items-center bg-white p-2.5 rounded-lg border border-emerald-100 shadow-sm">
+                      <div className="flex items-center gap-2.5">
+                        <span className="flex items-center justify-center w-6 h-6 rounded-md bg-slate-100 text-xs font-bold text-slate-600">
+                          #{win.rankPosition}
+                        </span>
+                        <span className="text-sm font-semibold text-slate-800 truncate max-w-[120px]" title={win.teamName}>
+                          {win.teamName}
+                        </span>
+                      </div>
+                      <span className={`text-[10px] font-mono font-bold px-2 py-1 rounded-md border flex-shrink-0 ${getAwardBadgeStyle(win.suggestedAwardType)}`}>
+                        {win.suggestedAwardType.replace(/_/g, ' ')}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                <p className="text-[11px] text-emerald-700 italic text-center mt-1">
+                  Hệ thống tự động xếp giải dựa trên điểm số cao nhất.
+                </p>
+
+                {/* Nút Chốt kết quả */}
+                <button 
+                  onClick={handleBatchAward}
+                  disabled={isBatchProcessing}
+                  className="mt-1 w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 text-white text-sm font-bold rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                >
+                  {isBatchProcessing ? (
+                    <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                  )}
+                  {isBatchProcessing ? 'Đang chốt giải...' : 'Chốt Danh Sách Này'}
+                </button>
+
+              </div>
+            </div>
+          )}
         </div>
 
         {/* CỘT HIỂN THỊ DANH SÁCH GIẢI THƯỞNG */}
@@ -282,6 +374,9 @@ export const AwardsPage: React.FC = () => {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50">
+                  {/* THÊM 2 CỘT MỚI VÀO ĐÂY */}
+                  <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Sự Kiện</th>
+                  <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Hạng Mục</th>
                   <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Tên Đội</th>
                   <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Giải Thưởng</th>
                   <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Chi Tiết Khen Thưởng</th>
@@ -290,28 +385,38 @@ export const AwardsPage: React.FC = () => {
               <tbody className="divide-y divide-slate-100">
                 {!selectedEventId ? (
                   <tr>
-                    <td colSpan={3} className="px-4 py-8 text-center text-sm text-slate-400 italic">
+                    <td colSpan={5} className="px-4 py-8 text-center text-sm text-slate-400 italic">
                       Hãy chọn một sự kiện từ form bên trái để xem dữ liệu.
                     </td>
                   </tr>
                 ) : awards.length === 0 ? (
                   <tr>
-                    <td colSpan={3} className="px-4 py-8 text-center text-sm text-slate-400">
+                    <td colSpan={5} className="px-4 py-8 text-center text-sm text-slate-400">
                       Chưa có giải thưởng nào được ghi nhận cho sự kiện này.
                     </td>
                   </tr>
                 ) : (
-                  awards.map((item) => (
+                  awards.map((item: any) => (
                     <tr key={item.awardId} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="px-4 py-4 text-sm font-semibold text-slate-900">
+                      {/* BỔ SUNG DATA SỰ KIỆN */}
+                      <td className="px-4 py-4 text-sm text-slate-600 max-w-[150px] truncate" title={item.eventName}>
+                        {item.eventName}
+                      </td>
+                      
+                      {/* BỔ SUNG DATA HẠNG MỤC */}
+                      <td className="px-4 py-4 text-sm font-medium text-slate-700 whitespace-nowrap">
+                        {item.categoryName}
+                      </td>
+
+                      <td className="px-4 py-4 text-sm font-semibold text-slate-900 whitespace-nowrap">
                         {item.teamName}
                       </td>
-                      <td className="px-4 py-4">
-                        <span className={`text-xs font-mono px-2.5 py-1 rounded-md border font-semibold ${getAwardBadgeStyle(item.awardType)}`}>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <span className={`text-[10px] font-mono px-2.5 py-1 rounded-md border font-bold ${getAwardBadgeStyle(item.awardType)}`}>
                           {item.awardType.replace(/_/g, ' ')}
                         </span>
                       </td>
-                      <td className="px-4 py-4 text-sm text-slate-600 max-w-xs truncate" title={item.description}>
+                      <td className="px-4 py-4 text-sm text-slate-600 max-w-[200px] truncate" title={item.description}>
                         {item.description || 'Không có mô tả đi kèm.'}
                       </td>
                     </tr>

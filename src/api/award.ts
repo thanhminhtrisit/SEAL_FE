@@ -32,5 +32,11 @@ export const award = {
   getCategoriesByEvent: async (eventId: number) => {
     const response = await apiClient.get(`/api/awards/events/${eventId}/categories`); 
     return response.data.data;
-  }
+  },
+
+  getSuggestedAwards: async (eventId: number, categoryId: number) => {
+    const response = await apiClient.get<ApiResponse<any[]>>(`/api/awards/events/${eventId}/suggestions?categoryId=${categoryId}`);
+    return response.data.data;
+  },
+  
 };
