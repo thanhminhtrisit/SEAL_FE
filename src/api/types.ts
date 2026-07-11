@@ -30,7 +30,18 @@ export interface RegisterRequest {
 
 export interface RegisterResponse {
   userId: number;
-  status: 'PENDING';
+  // ACTIVE when system config AUTO_APPROVE_ACCOUNTS=true (valid registrations activate instantly)
+  status: 'PENDING' | 'ACTIVE';
+}
+
+// POST /api/auth/google (GIS ID-token flow)
+export interface GoogleAuthResponse {
+  // PENDING_APPROVAL: account created/awaiting approval — no tokens yet
+  // AUTHENTICATED: same JWT pair as /api/auth/login
+  status: 'PENDING_APPROVAL' | 'AUTHENTICATED';
+  userId: number;
+  accessToken: string | null;
+  refreshToken: string | null;
 }
 
 // JWT payload claims

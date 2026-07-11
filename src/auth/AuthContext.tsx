@@ -7,7 +7,7 @@ import React, {
   useState,
 } from 'react';
 import { jwtDecode } from 'jwt-decode';
-import { loginApi, logoutApi } from '../api/auth';
+import { googleLoginApi, loginApi, logoutApi } from '../api/auth';
 import { LS_ACCESS_TOKEN } from '../api/client';
 import type { JwtPayload, LoginRequest } from '../api/types';
 import type { Role } from '../app/types';
@@ -54,6 +54,12 @@ interface AuthContextValue {
   userId: string | null;
   /** Calls BE, stores tokens, returns the decoded FE Role. Throws on failure. */
   login: (req: LoginRequest) => Promise<Role>;
+  /**
+   * Google Sign-In (GIS ID token). Returns the Role when AUTHENTICATED,
+   * or 'PENDING_APPROVAL' when the account was just created / awaits approval
+   * (no tokens issued — caller should show an info message, not navigate).
+   */
+  googleLogin: (idToken: string) => Promise<Role | 'PENDING_APPROVAL'>;
   /** Calls BE logout (best-effort), then clears tokens. */
   logout: () => Promise<void>;
 }
@@ -102,6 +108,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return decoded;
   }, []);
 
+  const googleLogin = useCallback(
+    async (idToken: string): Promise<Role | 'PENDING_APPROVAL'> => {
+      const res = await googleLoginApi(idToken);
+      if (res.status === 'PENDING_APPROVAL' || !res.accessToken || !res.refreshToken) {
+        return 'PENDING_APPROVAL';
+      }
+      localStorage.setItem(LS_ACCESS_TOKEN, res.accessToken);
+      localStorage.setItem(LS_REFRESH_TOKEN, res.refreshToken);
+      localStorage.removeItem(LS_TEAM_ID);
+      setAccessToken(res.accessToken);
+      const decoded = decodeRole(res.accessToken);
+      if (!decoded) throw new Error('Unrecognised role in token');
+      return decoded;
+    },
+    [],
+  );
+
   const logout = useCallback(async () => {
     await logoutApi();
     localStorage.removeItem(LS_ACCESS_TOKEN);
@@ -111,8 +134,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ isAuthenticated: !!accessToken, role, userId, login, logout }),
-    [accessToken, role, userId, login, logout],
+    () => ({ isAuthenticated: !!accessToken, role, userId, login, googleLogin, logout }),
+    [accessToken, role, userId, login, googleLogin, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

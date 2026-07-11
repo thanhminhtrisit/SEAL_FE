@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Code2, Calendar, Users, Trophy, ChevronRight, Eye, EyeOff, ArrowRight, GraduationCap, Building2, Clock, CheckCircle2, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { StatusBadge } from '../components/shared/Badge';
@@ -179,12 +179,61 @@ export function LandingPage({ onNavigate }: { onNavigate: (screen: string) => vo
   );
 }
 
+// Google Identity Services (GIS) — public Client ID, secret KHÔNG dùng ở flow này.
+// Override qua .env: VITE_GOOGLE_CLIENT_ID
+const GOOGLE_CLIENT_ID =
+  (import.meta as { env?: Record<string, string> }).env?.VITE_GOOGLE_CLIENT_ID ??
+  '850667015456-lrg13v22qapu46t277s51f1cjhn0pchv.apps.googleusercontent.com';
+
 export function LoginPage({ onNavigate, onRoleLogin }: { onNavigate: (s: string) => void; onRoleLogin: (role: string) => void }) {
   const auth = useAuth();
   const [showPwd, setShowPwd] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const googleBtnRef = useRef<HTMLDivElement>(null);
+
+  // Render nút Google Sign-In (GIS). Token → POST /api/auth/google:
+  // AUTHENTICATED → vào app; PENDING_APPROVAL → báo chờ duyệt (giữ nguyên FR-AUTH-03).
+  useEffect(() => {
+    const initGoogle = () => {
+      const g = (window as unknown as { google?: { accounts?: { id?: {
+        initialize: (cfg: object) => void;
+        renderButton: (el: HTMLElement, opts: object) => void;
+      } } } }).google;
+      if (!g?.accounts?.id || !googleBtnRef.current) return;
+      g.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: async (resp: { credential: string }) => {
+          try {
+            const result = await auth.googleLogin(resp.credential);
+            if (result === 'PENDING_APPROVAL') {
+              toast.info('Đã đăng ký bằng Google — tài khoản đang chờ duyệt trước khi đăng nhập');
+            } else {
+              onRoleLogin(result);
+            }
+          } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Đăng nhập Google thất bại');
+          }
+        },
+      });
+      g.accounts.id.renderButton(googleBtnRef.current, {
+        theme: 'outline', size: 'large', width: 368, text: 'signin_with', locale: 'vi',
+      });
+    };
+
+    if ((window as unknown as { google?: unknown }).google) {
+      initGoogle();
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = initGoogle;
+    document.head.appendChild(script);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -270,6 +319,13 @@ export function LoginPage({ onNavigate, onRoleLogin }: { onNavigate: (s: string)
             </button>
           </form>
 
+          <div className="flex items-center gap-3 my-5">
+            <div className="h-px bg-slate-200 flex-1" />
+            <span className="text-xs text-slate-400 uppercase tracking-wider">hoặc</span>
+            <div className="h-px bg-slate-200 flex-1" />
+          </div>
+          <div ref={googleBtnRef} className="flex justify-center" />
+
           <p className="mt-5 text-center text-sm text-slate-500">
             New participant? <button onClick={() => onNavigate('register')} className="text-blue-700 font-medium hover:text-blue-800">Create account</button>
           </p>
@@ -307,7 +363,7 @@ export function RegisterPage({ onNavigate }: { onNavigate: (s: string) => void }
     }
     setLoading(true);
     try {
-      await registerApi({
+      const res = await registerApi({
         email: form.email,
         password: form.password,
         fullName: form.fullName,
@@ -316,7 +372,12 @@ export function RegisterPage({ onNavigate }: { onNavigate: (s: string) => void }
         studentId: form.studentId || undefined,
         university: studentType === 'external' ? form.university || undefined : undefined,
       });
-      toast.success('Tài khoản đã tạo — chờ admin duyệt trước khi đăng nhập');
+      // AUTO_APPROVE_ACCOUNTS=true → BE kích hoạt ngay (status ACTIVE)
+      if (res.status === 'ACTIVE') {
+        toast.success('Tài khoản đã được kích hoạt tự động — đăng nhập ngay!');
+      } else {
+        toast.success('Tài khoản đã tạo — chờ admin duyệt trước khi đăng nhập');
+      }
       onNavigate('login');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Đăng ký thất bại');

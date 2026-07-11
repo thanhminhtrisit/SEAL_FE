@@ -331,6 +331,45 @@ export async function deleteRound(eventId: number, roundId: number): Promise<voi
   await apiClient.delete(`/api/events/${eventId}/rounds/${roundId}`);
 }
 
+// ─── Round lifecycle (FR-EVT-02 / BR-EVT-02) ────────────────────────────────
+// DRAFT → OPEN_FOR_SUBMISSION → SUBMISSION_CLOSED → SCORING_OPEN → SCORING_LOCKED → COMPLETED
+// Owner coordinator only. open-submission enforces BR-EVT-02 (previous round must be
+// SCORING_LOCKED/COMPLETED) — surface the BE message to the user on 4xx.
+
+async function transitionRound(
+  eventId: number,
+  roundId: number,
+  action: string,
+  body?: Record<string, unknown>,
+): Promise<EventRound> {
+  const res = await apiClient.post<ApiResponse<EventRound>>(
+    `/api/events/${eventId}/rounds/${roundId}/${action}`,
+    body,
+  );
+  const data = res.data.data;
+  if (!data) throw new Error(res.data.message ?? `Round ${action} failed`);
+  return data;
+}
+
+export const openRoundSubmission = (eventId: number, roundId: number) =>
+  transitionRound(eventId, roundId, 'open-submission');
+
+export const closeRoundSubmission = (eventId: number, roundId: number) =>
+  transitionRound(eventId, roundId, 'close-submission');
+
+export const openRoundScoring = (eventId: number, roundId: number) =>
+  transitionRound(eventId, roundId, 'open-scoring');
+
+export const lockRoundScoring = (eventId: number, roundId: number) =>
+  transitionRound(eventId, roundId, 'lock-scoring');
+
+/** BR-SCR-05: unlocking is exceptional — reason is mandatory and audited. */
+export const unlockRoundScoring = (eventId: number, roundId: number, reason: string) =>
+  transitionRound(eventId, roundId, 'unlock-scoring', { reason });
+
+export const completeRound = (eventId: number, roundId: number) =>
+  transitionRound(eventId, roundId, 'complete');
+
 // Category PATCH
 export interface UpdateCategoryRequest {
   name?: string;

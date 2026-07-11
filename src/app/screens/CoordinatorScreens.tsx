@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Calendar, Plus, ChevronRight, CheckCircle2, Clock, AlertTriangle, Users, Send, Lock, Trophy, Globe, FileBarChart, Eye, Edit2, UserCheck, UserX, Search, Download, Check, BarChart2, GraduationCap, Building2, RefreshCw, ArrowLeft, Layers, Tag, List, XCircle, Gavel, Copy, Key, PlayCircle, Archive, Trash2, X, DollarSign, Save } from 'lucide-react';
+import { Calendar, Plus, ChevronRight, CheckCircle2, Clock, AlertTriangle, Users, Send, Lock, Unlock, Trophy, Globe, FileBarChart, Eye, Edit2, UserCheck, UserX, Search, Download, Check, BarChart2, GraduationCap, Building2, RefreshCw, ArrowLeft, Layers, Tag, List, XCircle, Gavel, Copy, Key, PlayCircle, Archive, Trash2, X, DollarSign, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { KPICard } from '../components/shared/KPICard';
 import { StatusBadge } from '../components/shared/Badge';
@@ -33,6 +33,12 @@ import {
   deleteCriteriaSet,
   updateRound,
   deleteRound,
+  openRoundSubmission,
+  closeRoundSubmission,
+  openRoundScoring,
+  lockRoundScoring,
+  unlockRoundScoring,
+  completeRound,
   updateCategory,
   deleteCategory,
   getBudget,
@@ -2375,6 +2381,11 @@ export function EventDetailPage({
   });
   const [deletingRoundId, setDeletingRoundId] = useState<number | null>(null);
 
+  // Round lifecycle (FR-EVT-02): transition state + unlock-with-reason modal
+  const [transitioningRoundId, setTransitioningRoundId] = useState<number | null>(null);
+  const [unlockingRound, setUnlockingRound] = useState<EventRound | null>(null);
+  const [unlockReason, setUnlockReason] = useState('');
+
   // Edit/Delete state for categories
   const [editingCategory, setEditingCategory] = useState<EventCategory | null>(null);
   const [editCategoryName, setEditCategoryName] = useState('');
@@ -2453,6 +2464,40 @@ export function EventDetailPage({
 
   const fmtDate = (s: string | null | undefined) =>
     s ? s.replace('T', ' ').slice(0, 16) : '—';
+
+  // Round transitions chỉ có nghĩa khi event đang chạy (OPEN/IN_PROGRESS)
+  const canTransitionRounds =
+    !!event && (event.status === 'OPEN' || event.status === 'IN_PROGRESS');
+
+  const runRoundTransition = async (
+    round: EventRound,
+    action: () => Promise<EventRound>,
+    successLabel: string,
+  ) => {
+    setTransitioningRoundId(round.id);
+    try {
+      const updated = await action();
+      setRounds(prev => prev.map(r => (r.id === updated.id ? updated : r)));
+      toast.success(`${round.name}: ${successLabel}`);
+    } catch (err) {
+      // BE trả message nghiệp vụ rõ ràng (BR-EVT-02, sai thứ tự, không phải owner…) — hiện nguyên văn
+      toast.error(err instanceof Error ? err.message : 'Chuyển trạng thái thất bại');
+    } finally {
+      setTransitioningRoundId(null);
+    }
+  };
+
+  const handleUnlockRound = async () => {
+    if (!unlockingRound || !unlockReason.trim()) return;
+    const round = unlockingRound;
+    setUnlockingRound(null);
+    await runRoundTransition(
+      round,
+      () => unlockRoundScoring(eventId, round.id, unlockReason.trim()),
+      'đã mở khóa chấm điểm (có audit)',
+    );
+    setUnlockReason('');
+  };
 
   const handleAction = async () => {
     if (!event) return;
@@ -2825,7 +2870,7 @@ export function EventDetailPage({
           <table className="w-full">
             <thead>
               <tr className="border-b border-slate-100">
-                {['#', 'Tên round', 'Status', 'Deadline', 'Top N promote', ...(canEdit ? [''] : [])].map(h => (
+                {['#', 'Tên round', 'Status', 'Deadline', 'Top N promote', ...(canTransitionRounds ? ['Điều khiển'] : []), ...(canEdit ? [''] : [])].map(h => (
                   <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -2838,6 +2883,58 @@ export function EventDetailPage({
                   <td className="px-4 py-3"><StatusBadge status={r.status} /></td>
                   <td className="px-4 py-3 text-xs font-mono text-slate-500">{fmtDate(r.submissionDeadline)}</td>
                   <td className="px-4 py-3 text-xs font-mono text-slate-600">{r.promotionTopN ?? '—'}</td>
+                  {canTransitionRounds && (
+                    <td className="px-4 py-3">
+                      {transitioningRoundId === r.id ? (
+                        <RefreshCw className="w-4 h-4 animate-spin text-slate-400" />
+                      ) : r.status === 'DRAFT' ? (
+                        <button
+                          onClick={() => runRoundTransition(r, () => openRoundSubmission(eventId, r.id), 'đã mở nộp bài')}
+                          className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1.5 rounded-lg transition-colors"
+                          title="DRAFT → OPEN_FOR_SUBMISSION (BR-EVT-02: round trước phải đã khóa)">
+                          <PlayCircle className="w-3.5 h-3.5" /> Mở nộp bài
+                        </button>
+                      ) : r.status === 'OPEN_FOR_SUBMISSION' ? (
+                        <button
+                          onClick={() => runRoundTransition(r, () => closeRoundSubmission(eventId, r.id), 'đã đóng nộp bài')}
+                          className="flex items-center gap-1.5 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 px-2.5 py-1.5 rounded-lg transition-colors"
+                          title="OPEN_FOR_SUBMISSION → SUBMISSION_CLOSED">
+                          <XCircle className="w-3.5 h-3.5" /> Đóng nộp bài
+                        </button>
+                      ) : r.status === 'SUBMISSION_CLOSED' ? (
+                        <button
+                          onClick={() => runRoundTransition(r, () => openRoundScoring(eventId, r.id), 'đã mở chấm điểm')}
+                          className="flex items-center gap-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 px-2.5 py-1.5 rounded-lg transition-colors"
+                          title="SUBMISSION_CLOSED → SCORING_OPEN (judge chỉ chấm sau khi đóng nộp bài)">
+                          <PlayCircle className="w-3.5 h-3.5" /> Mở chấm điểm
+                        </button>
+                      ) : r.status === 'SCORING_OPEN' ? (
+                        <button
+                          onClick={() => runRoundTransition(r, () => lockRoundScoring(eventId, r.id), 'đã khóa chấm điểm')}
+                          className="flex items-center gap-1.5 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 px-2.5 py-1.5 rounded-lg transition-colors"
+                          title="SCORING_OPEN → SCORING_LOCKED (BR-SCR-05: điểm bất biến sau khóa)">
+                          <Lock className="w-3.5 h-3.5" /> Khóa chấm điểm
+                        </button>
+                      ) : r.status === 'SCORING_LOCKED' ? (
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => { setUnlockingRound(r); setUnlockReason(''); }}
+                            className="flex items-center gap-1 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 px-2 py-1.5 rounded-lg transition-colors"
+                            title="Mở khóa (bắt buộc lý do, có audit)">
+                            <Unlock className="w-3.5 h-3.5" /> Unlock
+                          </button>
+                          <button
+                            onClick={() => runRoundTransition(r, () => completeRound(eventId, r.id), 'đã hoàn tất')}
+                            className="flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-2 py-1.5 rounded-lg transition-colors"
+                            title="SCORING_LOCKED → COMPLETED">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> Hoàn tất
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-slate-400">—</span>
+                      )}
+                    </td>
+                  )}
                   {canEdit && (
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1.5">
@@ -2880,6 +2977,37 @@ export function EventDetailPage({
           </table>
         )}
       </section>
+
+      {/* Unlock round modal — BR-SCR-05: reason bắt buộc, được ghi audit */}
+      {unlockingRound && (
+        <Modal title={`Mở khóa chấm điểm — ${unlockingRound.name}`} onClose={() => setUnlockingRound(null)} size="sm"
+          footer={
+            <>
+              <button onClick={() => setUnlockingRound(null)}
+                className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-lg hover:bg-slate-50">Hủy</button>
+              <button onClick={handleUnlockRound} disabled={!unlockReason.trim()}
+                className="px-4 py-2 bg-amber-600 text-white text-sm font-semibold rounded-lg hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                Mở khóa
+              </button>
+            </>
+          }>
+          <div className="space-y-3">
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-800">
+                Sau khi khóa, điểm số là bất biến (BR-SCR-05). Mở khóa là thao tác ngoại lệ —
+                lý do sẽ được ghi vào audit log kèm tên bạn.
+              </p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Lý do mở khóa <span className="text-red-500">*</span></label>
+              <textarea value={unlockReason} onChange={e => setUnlockReason(e.target.value)}
+                rows={3} placeholder="VD: Judge nhập nhầm điểm đội X — mở lại để sửa theo biên bản"
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" />
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {/* Categories */}
       <section className="bg-white rounded-xl shadow-sm border border-slate-200">
@@ -3314,13 +3442,6 @@ export function EventDetailPage({
                   <option value="">Dùng chung cả vòng (categoryId = null)</option>
                   {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Top-N thăng hạng</label>
-                <input type="number" min={1} value={newCsForm.promotionTopN === '' ? '' : newCsForm.promotionTopN}
-                  onChange={e => setNewCsForm(p => ({ ...p, promotionTopN: parseNumInput(e) }))}
-                  placeholder="Để trống = theo round"
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-700" />
               </div>
             </div>
             {/* Criteria table */}

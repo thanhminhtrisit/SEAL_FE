@@ -2,6 +2,7 @@ import { apiClient } from './client';
 import type {
   ApiResponse,
   AuthResponse,
+  GoogleAuthResponse,
   LoginRequest,
   RegisterRequest,
   RegisterResponse,
@@ -26,6 +27,21 @@ export async function registerApi(
   );
   const data = res.data.data;
   if (!data) throw new Error(res.data.message ?? 'Registration failed');
+  return data;
+}
+
+/**
+ * Google Sign-In (GIS ID-token flow). idToken = `credential` from the GIS callback.
+ * New emails register as PENDING participants (unless auto-approve is on) —
+ * check res.status before storing tokens.
+ */
+export async function googleLoginApi(idToken: string): Promise<GoogleAuthResponse> {
+  const res = await apiClient.post<ApiResponse<GoogleAuthResponse>>(
+    '/api/auth/google',
+    { idToken },
+  );
+  const data = res.data.data;
+  if (!data) throw new Error(res.data.message ?? 'Google sign-in failed');
   return data;
 }
 
