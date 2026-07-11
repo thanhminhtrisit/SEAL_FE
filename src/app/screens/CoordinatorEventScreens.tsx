@@ -100,89 +100,89 @@ export function ScoringControl() {
   );
 }
 
-export function RankingPage() {
-  const [showCompute, setShowCompute] = useState(false);
-  return (
-    <div className="p-7 space-y-5">
-      <PageHeader title="Rankings" subtitle="Preliminary Round — SEAL Hackathon Summer 2026"
-        actions={
-          <>
-            <button onClick={() => setShowCompute(true)} className="flex items-center gap-2 border border-blue-200 text-blue-700 text-sm font-medium px-4 py-2 rounded-lg hover:bg-blue-50 transition-colors"><BarChart2 className="w-4 h-4" /> Recompute Ranking</button>
-            <button className="flex items-center gap-2 border border-slate-200 text-slate-600 text-sm px-3 py-2 rounded-lg hover:bg-slate-50"><Download className="w-4 h-4" /> Export</button>
-          </>
-        }
-      />
+// export function RankingPage() {
+//   const [showCompute, setShowCompute] = useState(false);
+//   return (
+//     <div className="p-7 space-y-5">
+//       <PageHeader title="Rankings" subtitle="Preliminary Round — SEAL Hackathon Summer 2026"
+//         actions={
+//           <>
+//             <button onClick={() => setShowCompute(true)} className="flex items-center gap-2 border border-blue-200 text-blue-700 text-sm font-medium px-4 py-2 rounded-lg hover:bg-blue-50 transition-colors"><BarChart2 className="w-4 h-4" /> Recompute Ranking</button>
+//             <button className="flex items-center gap-2 border border-slate-200 text-slate-600 text-sm px-3 py-2 rounded-lg hover:bg-slate-50"><Download className="w-4 h-4" /> Export</button>
+//           </>
+//         }
+//       />
 
-      <div className="grid grid-cols-2 gap-5">
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200">
-          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-            <h3 className="font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>Event-Level Ranking</h3>
-            <span className="text-xs text-slate-500">Top 6 promoted to Final Round</span>
-          </div>
-          <table className="w-full">
-            <thead><tr className="border-b border-slate-100">{['Rank', 'Team', 'Category', 'Score', 'Status'].map(c => <th key={c} className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>)}</tr></thead>
-            <tbody className="divide-y divide-slate-100">
-              {rankingData.map(r => (
-                <tr key={r.rank} className={`hover:bg-slate-50 transition-colors ${r.rank <= 3 ? 'bg-amber-50/40' : ''}`}>
-                  <td className="px-4 py-3">
-                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold ${r.rank === 1 ? 'bg-yellow-400 text-yellow-900' : r.rank === 2 ? 'bg-slate-300 text-slate-700' : r.rank === 3 ? 'bg-amber-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
-                      {r.rank}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-sm font-semibold text-slate-900">{r.team}</td>
-                  <td className="px-4 py-3 text-xs text-slate-600">{r.category}</td>
-                  <td className="px-4 py-3 text-sm font-mono font-bold text-blue-800">{r.score}</td>
-                  <td className="px-4 py-3">
-                    {r.status === 'PROMOTED' ? <span className="flex items-center gap-1 text-xs text-emerald-700 font-medium"><Check className="w-3 h-3" /> Promoted</span> : <span className="text-xs text-slate-400">—</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+//       <div className="grid grid-cols-2 gap-5">
+//         <div className="bg-white rounded-xl shadow-sm border border-slate-200">
+//           <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+//             <h3 className="font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>Event-Level Ranking</h3>
+//             <span className="text-xs text-slate-500">Top 6 promoted to Final Round</span>
+//           </div>
+//           <table className="w-full">
+//             <thead><tr className="border-b border-slate-100">{['Rank', 'Team', 'Category', 'Score', 'Status'].map(c => <th key={c} className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>)}</tr></thead>
+//             <tbody className="divide-y divide-slate-100">
+//               {rankingData.map(r => (
+//                 <tr key={r.rank} className={`hover:bg-slate-50 transition-colors ${r.rank <= 3 ? 'bg-amber-50/40' : ''}`}>
+//                   <td className="px-4 py-3">
+//                     <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold ${r.rank === 1 ? 'bg-yellow-400 text-yellow-900' : r.rank === 2 ? 'bg-slate-300 text-slate-700' : r.rank === 3 ? 'bg-amber-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
+//                       {r.rank}
+//                     </div>
+//                   </td>
+//                   <td className="px-4 py-3 text-sm font-semibold text-slate-900">{r.team}</td>
+//                   <td className="px-4 py-3 text-xs text-slate-600">{r.category}</td>
+//                   <td className="px-4 py-3 text-sm font-mono font-bold text-blue-800">{r.score}</td>
+//                   <td className="px-4 py-3">
+//                     {r.status === 'PROMOTED' ? <span className="flex items-center gap-1 text-xs text-emerald-700 font-medium"><Check className="w-3 h-3" /> Promoted</span> : <span className="text-xs text-slate-400">—</span>}
+//                   </td>
+//                 </tr>
+//               ))}
+//             </tbody>
+//           </table>
+//         </div>
 
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-          <h3 className="font-semibold text-slate-900 mb-4" style={{ fontFamily: 'var(--font-display)' }}>Score Profile — Top 3 Teams</h3>
-          <ResponsiveContainer width="100%" height={250}>
-            <RadarChart data={radarData}>
-              <PolarGrid stroke="#e2e8f0" />
-              <PolarAngleAxis dataKey="criterion" tick={{ fontSize: 11, fill: '#64748b' }} />
-              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }} />
-              <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Radar name="Code Seals" dataKey="code_seals" stroke="#1e3a8a" fill="#1e3a8a" fillOpacity={0.15} />
-              <Radar name="MobileFirst" dataKey="mobileFirst" stroke="#0891b2" fill="#0891b2" fillOpacity={0.1} />
-              <Radar name="AlphaBot" dataKey="alphaBot" stroke="#059669" fill="#059669" fillOpacity={0.1} />
-            </RadarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+//         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+//           <h3 className="font-semibold text-slate-900 mb-4" style={{ fontFamily: 'var(--font-display)' }}>Score Profile — Top 3 Teams</h3>
+//           <ResponsiveContainer width="100%" height={250}>
+//             <RadarChart data={radarData}>
+//               <PolarGrid stroke="#e2e8f0" />
+//               <PolarAngleAxis dataKey="criterion" tick={{ fontSize: 11, fill: '#64748b' }} />
+//               <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }} />
+//               <Legend wrapperStyle={{ fontSize: 11 }} />
+//               <Radar name="Code Seals" dataKey="code_seals" stroke="#1e3a8a" fill="#1e3a8a" fillOpacity={0.15} />
+//               <Radar name="MobileFirst" dataKey="mobileFirst" stroke="#0891b2" fill="#0891b2" fillOpacity={0.1} />
+//               <Radar name="AlphaBot" dataKey="alphaBot" stroke="#059669" fill="#059669" fillOpacity={0.1} />
+//             </RadarChart>
+//           </ResponsiveContainer>
+//         </div>
+//       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-        <h3 className="font-semibold text-slate-900 mb-4" style={{ fontFamily: 'var(--font-display)' }}>Criterion Breakdown</h3>
-        <ResponsiveContainer width="100%" height={200}>
-          <BarChart data={rankingData.map(r => ({ team: r.team, technical: r.technical, innovation: r.innovation, uiux: r.uiux, presentation: r.presentation }))}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-            <XAxis dataKey="team" tick={{ fontSize: 11, fill: '#64748b' }} />
-            <YAxis domain={[0, 10]} tick={{ fontSize: 11, fill: '#64748b' }} />
-            <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }} />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
-            <Bar dataKey="technical" name="Technical" fill="#1e3a8a" radius={[2, 2, 0, 0]} />
-            <Bar dataKey="innovation" name="Innovation" fill="#0891b2" radius={[2, 2, 0, 0]} />
-            <Bar dataKey="uiux" name="UI/UX" fill="#059669" radius={[2, 2, 0, 0]} />
-            <Bar dataKey="presentation" name="Presentation" fill="#d97706" radius={[2, 2, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
+//       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+//         <h3 className="font-semibold text-slate-900 mb-4" style={{ fontFamily: 'var(--font-display)' }}>Criterion Breakdown</h3>
+//         <ResponsiveContainer width="100%" height={200}>
+//           <BarChart data={rankingData.map(r => ({ team: r.team, technical: r.technical, innovation: r.innovation, uiux: r.uiux, presentation: r.presentation }))}>
+//             <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+//             <XAxis dataKey="team" tick={{ fontSize: 11, fill: '#64748b' }} />
+//             <YAxis domain={[0, 10]} tick={{ fontSize: 11, fill: '#64748b' }} />
+//             <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }} />
+//             <Legend wrapperStyle={{ fontSize: 11 }} />
+//             <Bar dataKey="technical" name="Technical" fill="#1e3a8a" radius={[2, 2, 0, 0]} />
+//             <Bar dataKey="innovation" name="Innovation" fill="#0891b2" radius={[2, 2, 0, 0]} />
+//             <Bar dataKey="uiux" name="UI/UX" fill="#059669" radius={[2, 2, 0, 0]} />
+//             <Bar dataKey="presentation" name="Presentation" fill="#d97706" radius={[2, 2, 0, 0]} />
+//           </BarChart>
+//         </ResponsiveContainer>
+//       </div>
 
-      {showCompute && (
-        <Modal title="Recompute Rankings" onClose={() => setShowCompute(false)} size="sm"
-          footer={<><button onClick={() => setShowCompute(false)} className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-lg hover:bg-slate-50">Cancel</button><button onClick={() => setShowCompute(false)} className="px-4 py-2 bg-blue-800 text-white text-sm font-semibold rounded-lg hover:bg-blue-900">Recompute</button></>}>
-          <p className="text-sm text-slate-600">Recalculate all weighted scores using current judge entries. Only scores from locked rounds are included. This will overwrite the current rankings.</p>
-        </Modal>
-      )}
-    </div>
-  );
-}
+//       {showCompute && (
+//         <Modal title="Recompute Rankings" onClose={() => setShowCompute(false)} size="sm"
+//           footer={<><button onClick={() => setShowCompute(false)} className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-lg hover:bg-slate-50">Cancel</button><button onClick={() => setShowCompute(false)} className="px-4 py-2 bg-blue-800 text-white text-sm font-semibold rounded-lg hover:bg-blue-900">Recompute</button></>}>
+//           <p className="text-sm text-slate-600">Recalculate all weighted scores using current judge entries. Only scores from locked rounds are included. This will overwrite the current rankings.</p>
+//         </Modal>
+//       )}
+//     </div>
+//   );
+// }
 
 // export function AwardsPage() {
 //   const [showAssign, setShowAssign] = useState<typeof awardsData[0] | null>(null);

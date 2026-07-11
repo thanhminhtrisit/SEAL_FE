@@ -2,9 +2,7 @@ import { apiClient } from './client';
 import { AwardResponse, AwardCreateRequest, ApiResponse } from '../app/types';
 
 export const award = {
-  // THÊM MỚI: API lấy danh sách tất cả các sự kiện để chọn
   getEvents: async () => {
-    // Điều chỉnh endpoint /api/events cho đúng với EventController của bạn
     const response = await apiClient.get('/api/events'); 
     return response.data.data;
   },
@@ -37,6 +35,18 @@ export const award = {
   getSuggestedAwards: async (eventId: number, categoryId: number) => {
     const response = await apiClient.get<ApiResponse<any[]>>(`/api/awards/events/${eventId}/suggestions?categoryId=${categoryId}`);
     return response.data.data;
+  },
+
+  getEligibleTeamsForAward: async (eventId: number, categoryId: number) => {
+    const response = await apiClient.get(`/api/awards/events/${eventId}/eligible-teams`, {
+      params: { categoryId }
+    });
+    return response.data;
+  },
+
+  publishResults: async (eventId: number) => {
+    const response = await apiClient.put(`/api/awards/events/${eventId}/publish`);
+    return response.data;
   },
   
 };

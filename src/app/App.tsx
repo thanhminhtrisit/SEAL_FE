@@ -20,8 +20,9 @@ import {
   SubmissionMonitor, JudgeAssignment, TeamManagement, AccountApprovalsPage,
   EventDetailPage,
 } from './screens/CoordinatorScreens';
+
 import {
-  ScoringControl, RankingPage, ResultPublication, RBLDashboard,
+  ScoringControl, RBLDashboard,
 } from './screens/CoordinatorEventScreens';
 
 // Judge screens
@@ -46,6 +47,8 @@ import { RankingScreen } from './screens/RankingScreen';
 
 //Award screen (can be accessed by Coordinator and Super Coordinator)
 import { AwardsPage } from './screens/AwardPage';
+
+import { ResultPublicationScreen } from './screens/ResultPublicationScreen';
 
 // ── Breadcrumb map ────────────────────────────────────────────────────────────
 const breadcrumbs: Record<string, string[]> = {
@@ -351,7 +354,7 @@ function ScreenRenderer({ screen, role, onNavigate, selectedEventId, onSelectEve
         />
       );
     case 'coord-awards': return <AwardsPage />;
-    case 'coord-results': return <ResultPublication />;
+    case 'coord-results': return <ResultPublicationScreen eventId={selectedEventId || undefined} />;
     case 'coord-rbl': return <RBLDashboard />;
 
     // Judge
