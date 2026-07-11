@@ -1,45 +1,51 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ranking } from '../../api/ranking';
 import { RankingResponse } from '../types';
+// Bổ sung import Modal chi tiết điểm
+import { ScoreBreakdownModal } from '../components/ranking_score/ScoreBreakdownModal';
 
 interface RankingScreenProps {
   isCoordinator?: boolean;
 }
 
 export const RankingScreen: React.FC<RankingScreenProps> = ({ isCoordinator = true }) => {
-  // --- TẦNG 1: STATE QUẢN LÝ EVENT & CATEGORY KHỞI TẠO ---
+  // STATE QUẢN LÝ EVENT & CATEGORY KHỞI TẠO
   const [events, setEvents] = useState<{id: number, name: string}[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
   
-  // STATE MỚI: Danh sách danh mục được tải độc lập theo Event
+  // Danh sách danh mục được tải độc lập theo Event
   const [categories, setCategories] = useState<{id: number, name: string}[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | 'ALL'>('ALL');
 
-  // --- TẦNG 2: STATE QUẢN LÝ ROUND (TABS) ---
+  // STATE QUẢN LÝ ROUND (TABS)
   const [rounds, setRounds] = useState<{id: number, name: string}[]>([]);
   const [activeRoundId, setActiveRoundId] = useState<number | null>(null);
 
-  // --- TẦNG 3: STATE QUẢN LÝ RANKING ---
+  // STATE QUẢN LÝ RANKING
   const [rankings, setRankings] = useState<RankingResponse[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  // --- STATE QUẢN LÝ TÁC VỤ THỦ CÔNG ---
+  // STATE QUẢN LÝ TÁC VỤ THỦ CÔNG
   const [selectedTeamIds, setSelectedTeamIds] = useState<number[]>([]);
   const [isPromoting, setIsPromoting] = useState<boolean>(false);
 
-  // State cho Modal Disqualify
+  // STATE QUẢN LÝ ĐÌNH CHỈ ĐỘI THI
   const [disqualifyData, setDisqualifyData] = useState<{ teamId: number, teamName: string } | null>(null);
   const [disqualifyReason, setDisqualifyReason] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [isPublished, setIsPublished] = useState<boolean>(false);
   
-  // State cho Modal Xem Blacklist
+  // STATE QUẢN LÝ MODAL XEM DANH SÁCH ĐÌNH CHỈ
   const [isDisqualifiedModalOpen, setIsDisqualifiedModalOpen] = useState(false);
   const [disqualifiedTeams, setDisqualifiedTeams] = useState<any[]>([]);
   const [isLoadingBlacklist, setIsLoadingBlacklist] = useState(false);
 
-  // --- LUỒNG 1: CHẠY NGAY KHI VÀO TRANG -> TẢI DANH SÁCH EVENT ---
+  // BỔ SUNG: STATE QUẢN LÝ SCORE BREAKDOWN MODAL
+  const [breakdownTeamId, setBreakdownTeamId] = useState<number | null>(null);
+  const [breakdownTeamName, setBreakdownTeamName] = useState<string>('');
+
+  // LUỒNG 1: CHẠY NGAY KHI VÀO TRANG -> TẢI DANH SÁCH EVENT 
   useEffect(() => {
     const fetchInitialEvents = async () => {
       try {
@@ -55,7 +61,7 @@ export const RankingScreen: React.FC<RankingScreenProps> = ({ isCoordinator = tr
     fetchInitialEvents();
   }, []);
 
-  // --- LUỒNG 2: KHI EVENT THAY ĐỔI -> TẢI LẠI ROUNDS VÀ CATEGORIES ---
+  // LUỒNG 2: KHI EVENT THAY ĐỔI -> TẢI LẠI ROUNDS VÀ CATEGORIES 
   useEffect(() => {
     const fetchEventData = async () => {
       if (!selectedEventId) return;
@@ -72,7 +78,6 @@ export const RankingScreen: React.FC<RankingScreenProps> = ({ isCoordinator = tr
         }
 
         // Tải danh sách Hạng mục (Category) của sự kiện này
-        // (Yêu cầu API ranking.getCategoriesByEvent phải được định nghĩa trong file API)
         if (ranking.getCategoriesByEvent) {
           const catData = await ranking.getCategoriesByEvent(selectedEventId);
           setCategories(catData || []);
@@ -85,7 +90,7 @@ export const RankingScreen: React.FC<RankingScreenProps> = ({ isCoordinator = tr
     fetchEventData();
   }, [selectedEventId]);
 
-  // --- LUỒNG 3: KHI ĐỔI ROUND -> TẢI LẠI BẢNG XẾP HẠNG TỔNG ---
+  // LUỒNG 3: KHI ĐỔI ROUND -> TẢI LẠI BẢNG XẾP HẠNG TỔNG 
   useEffect(() => {
     if (activeRoundId !== null) {
       fetchRankings(activeRoundId);
@@ -149,25 +154,31 @@ export const RankingScreen: React.FC<RankingScreenProps> = ({ isCoordinator = tr
     }
   };
 
-  const handleConfirmDisqualify = async () => {
-    if (!disqualifyReason.trim() || !activeRoundId) {
-      alert('Vui lòng nhập lý do đình chỉ để lưu vào Audit Log!');
-      return;
-    }
+const handleConfirmDisqualify = async () => {
+  if (!disqualifyReason.trim() || !activeRoundId) {
+    alert('Vui lòng nhập lý do đình chỉ để lưu vào Audit Log!');
+    return;
+  }
+  
+  setIsSubmitting(true);
+  try {
+    // Gọi API đình chỉ
+    await ranking.disqualifyTeam(disqualifyData!.teamId, disqualifyReason);
+    alert(`Đã đình chỉ thành công đội ${disqualifyData!.teamName}.`);
     
-    setIsSubmitting(true);
-    try {
-      await ranking.disqualifyTeam(disqualifyData!.teamId, disqualifyReason);
-      alert(`Đã đình chỉ thành công đội ${disqualifyData!.teamName}.`);
-      setDisqualifyData(null);
-      setDisqualifyReason('');
-      await handleComputeRanking(); 
-    } catch (err: any) {
-      alert('Có lỗi xảy ra khi đình chỉ đội thi.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+    // Đóng Modal
+    setDisqualifyData(null);
+    setDisqualifyReason('');
+    
+    
+    await handleComputeRanking(); // Tính toán lại bảng xếp hạng sau khi đình chỉ
+    
+  } catch (err: any) {
+    alert('Có lỗi xảy ra khi đình chỉ đội thi.');
+  } finally {
+    setIsSubmitting(false);
+  }
+};
 
   const handleViewDisqualified = async () => {
     if (!selectedEventId) return;
@@ -183,7 +194,18 @@ export const RankingScreen: React.FC<RankingScreenProps> = ({ isCoordinator = tr
     }
   };
 
-  // --- LỌC UI THEO CATEGORY ID ---
+  // BỔ SUNG: HÀM ĐIỀU KHIỂN SCORE BREAKDOWN MODAL
+  const handleOpenBreakdown = (teamId: number, teamName: string) => {
+    setBreakdownTeamId(teamId);
+    setBreakdownTeamName(teamName);
+  };
+
+  const handleCloseBreakdown = () => {
+    setBreakdownTeamId(null);
+    setBreakdownTeamName('');
+  };
+
+  //  LỌC UI THEO CATEGORY ID 
   const filteredRankings = useMemo(() => {
     if (selectedCategoryId === 'ALL') return rankings;
     
@@ -288,17 +310,6 @@ export const RankingScreen: React.FC<RankingScreenProps> = ({ isCoordinator = tr
                 >
                     📋 Đội đình chỉ
                 </button>
-
-               <button 
-                  onClick={handleComputeRanking}
-                  disabled={isLoading || !activeRoundId || (categories.length > 0 && selectedCategoryId === 'ALL')}
-                  className={`flex-1 sm:flex-none px-4 py-2 font-semibold text-white rounded-md transition-all whitespace-nowrap
-                    ${(isLoading || !activeRoundId || (categories.length > 0 && selectedCategoryId === 'ALL')) 
-                      ? 'bg-blue-300 cursor-not-allowed' 
-                      : 'bg-blue-600 hover:bg-blue-700 shadow-sm'}`}
-                >
-                  {isLoading ? 'Đang xử lý...' : 'Tính toán Xếp hạng'}
-                </button>
               </div>
             )}
           </div>
@@ -315,7 +326,8 @@ export const RankingScreen: React.FC<RankingScreenProps> = ({ isCoordinator = tr
                 <th className="px-6 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Đội thi</th>
                 <th className="px-6 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Hạng mục</th>
                 <th className="px-6 py-3 text-center text-xs font-semibold text-slate-600 uppercase tracking-wider">Tổng Điểm</th>
-                <th className="px-6 py-3 text-center text-xs font-semibold text-slate-600 uppercase tracking-wider">Trạng Thái</th>
+                <th className="px-6 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Trạng Thái</th>
+                <th className="px-6 py-3 text-center text-xs font-semibold text-slate-600 uppercase tracking-wider">Chi Tiết Điểm</th>
                 {isCoordinator && <th className="px-6 py-3 text-center text-xs font-semibold text-slate-600 uppercase tracking-wider">Hành động</th>}
               </tr>
             </thead>
@@ -359,13 +371,32 @@ export const RankingScreen: React.FC<RankingScreenProps> = ({ isCoordinator = tr
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-blue-700">{team.teamName}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{team.categoryName || '—'}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-slate-800 text-center font-mono">{team.totalScore.toFixed(3)}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-center">
-                      {team.isPromoted ? (
-                        <span className="px-2.5 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-emerald-100 text-emerald-700">Thăng hạng</span>
-                      ) : (
-                        <span className="px-2.5 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-slate-100 text-slate-500">Dừng bước</span>
-                      )}
+                    
+                    {/* BỔ SUNG: CẬP NHẬT CỘT TRẠNG THÁI & NÚT CHI TIẾT */}
+                    <td className="px-6 py-4 whitespace-nowrap text-left">
+                      <div className="flex items-center gap-3">
+                        {team.isPromoted ? (
+                          <span className="px-2.5 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-emerald-100 text-emerald-700">Thăng hạng</span>
+                        ) : (
+                          <span className="px-2.5 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-slate-100 text-slate-500">Dừng bước</span>
+                        )}
+                      </div>
                     </td>
+
+                    <td className="px-6 py-4 whitespace-nowrap text-center">
+                      <button
+                        onClick={() => handleOpenBreakdown(team.teamId, team.teamName)}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-md transition-colors"
+                        title="Xem bảng điểm chi tiết"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                        Chi tiết
+                      </button>
+                    </td>
+
                     {isCoordinator && (
                       <td className="px-6 py-4 whitespace-nowrap text-center">
                         <button 
@@ -451,6 +482,17 @@ export const RankingScreen: React.FC<RankingScreenProps> = ({ isCoordinator = tr
                   </div>
               </div>
           )}
+
+        {/* BỔ SUNG: RENDER SCORE BREAKDOWN MODAL */}
+        {activeRoundId && (
+          <ScoreBreakdownModal
+            isOpen={breakdownTeamId !== null}
+            onClose={handleCloseBreakdown}
+            teamId={breakdownTeamId!}
+            roundId={activeRoundId}
+            teamName={breakdownTeamName}
+          />
+        )}
       </div>
     </div>
   );

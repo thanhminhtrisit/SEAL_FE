@@ -3,6 +3,7 @@ import { Bell, ChevronDown, Settings, LogOut, UserCircle, Shield, Briefcase, Cod
 import type { Role } from '../types';
 import { useAuth } from '../../auth/AuthContext';
 import { getMe, type MeResponse } from '../../api/auth';
+import { NotificationBell } from './notification_bell/NotificationBell';
 
 const ROLE_META: Record<Role, { label: string; icon: typeof Shield; color: string }> = {
   PUBLIC:            { label: 'Public View',       icon: User,       color: 'text-slate-500' },
@@ -16,13 +17,6 @@ const ROLE_META: Record<Role, { label: string; icon: typeof Shield; color: strin
   TEAM_MEMBER:       { label: 'Team Member',        icon: UserCircle, color: 'text-green-600' },
 };
 
-const notifications = [
-  { id: 1, text: 'Event "SEAL Hackathon Summer 2026" approved by Super Coordinator', time: '5m ago', unread: true },
-  { id: 2, text: 'Team "Code Seals" submitted project for Preliminary Round', time: '1h ago', unread: true },
-  { id: 3, text: 'New participant registration pending approval', time: '2h ago', unread: true },
-  { id: 4, text: 'Scoring deadline in 24 hours – Final Round', time: '3h ago', unread: false },
-  { id: 5, text: 'RBL analysis complete for Preliminary Round', time: '1d ago', unread: false },
-];
 
 function avatarInitials(fullName: string): string {
   const parts = fullName.trim().split(/\s+/);
@@ -40,7 +34,6 @@ interface HeaderProps {
 export function Header({ currentRole, onLogout, breadcrumbs, onNavigate }: HeaderProps) {
   const auth = useAuth();
   const [me, setMe] = useState<MeResponse | null>(null);
-  const [showNotifications, setShowNotifications] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
 
   // Fetch real user info whenever the user logs in; clear on logout
@@ -50,14 +43,13 @@ export function Header({ currentRole, onLogout, breadcrumbs, onNavigate }: Heade
   }, [auth.isAuthenticated]);
 
   const roleInfo = ROLE_META[currentRole];
-  const unreadCount = notifications.filter(n => n.unread).length;
 
   const displayName = me?.fullName ?? '…';
   const displayEmail = me?.email ?? '';
   const displayRole = me?.roleCode ?? roleInfo.label;
   const displayAvatar = me ? avatarInitials(me.fullName) : roleInfo.label.slice(0, 2).toUpperCase();
 
-  const closeAll = () => { setShowNotifications(false); setShowProfile(false); };
+  const closeAll = () => { setShowProfile(false); };
 
   return (
     <header className="h-16 bg-white border-b border-slate-200 flex items-center px-6 gap-4 sticky top-0 z-30">
@@ -80,40 +72,12 @@ export function Header({ currentRole, onLogout, breadcrumbs, onNavigate }: Heade
       </div>
 
       {/* Notifications */}
-      <div className="relative">
-        <button
-          onClick={() => { setShowNotifications(v => !v); setShowProfile(false); }}
-          className="relative p-2 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-700 transition-colors"
-        >
-          <Bell className="w-5 h-5" />
-          {unreadCount > 0 && (
-            <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
-              {unreadCount}
-            </span>
-          )}
-        </button>
-        {showNotifications && (
-          <div className="absolute right-0 top-full mt-2 w-96 bg-white rounded-xl shadow-lg border border-slate-200 z-50">
-            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="font-semibold text-slate-900 text-sm" style={{ fontFamily: 'var(--font-display)' }}>Notifications</h3>
-              <button className="text-xs text-blue-600 hover:text-blue-700">Mark all read</button>
-            </div>
-            <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto">
-              {notifications.map(n => (
-                <div key={n.id} className={`px-4 py-3 ${n.unread ? 'bg-blue-50/50' : ''}`}>
-                  <p className="text-sm text-slate-700 leading-snug">{n.text}</p>
-                  <p className="text-xs text-slate-400 mt-1">{n.time}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
+      <NotificationBell />
 
       {/* Profile */}
       <div className="relative">
         <button
-          onClick={() => { setShowProfile(v => !v); setShowNotifications(false); }}
+          onClick={() => { setShowProfile(v => !v);}}
           className="flex items-center gap-2.5 hover:bg-slate-50 rounded-lg px-2 py-1.5 transition-colors"
         >
           <div className="w-8 h-8 rounded-full bg-blue-700 text-white text-xs font-bold flex items-center justify-center" style={{ fontFamily: 'var(--font-display)' }}>

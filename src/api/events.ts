@@ -1,5 +1,6 @@
 import { apiClient } from './client';
 import type { ApiResponse } from './types';
+import axios from 'axios';
 
 export type EventType = 'SPRING' | 'SUMMER' | 'FALL' | 'SPECIAL';
 
@@ -560,3 +561,5 @@ export async function deleteCategoryResource(
 ): Promise<void> {
   await apiClient.delete(`/api/events/${eventId}/categories/${categoryId}/resources/${resourceId}`);
 }
+
+

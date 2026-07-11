@@ -20,8 +20,9 @@ import {
   SubmissionMonitor, JudgeAssignment, TeamManagement, AccountApprovalsPage,
   EventDetailPage,
 } from './screens/CoordinatorScreens';
+
 import {
-  ScoringControl, RankingPage, ResultPublication, RBLDashboard,
+  ScoringControl, RBLDashboard,
 } from './screens/CoordinatorEventScreens';
 
 // Judge screens
@@ -32,8 +33,9 @@ import { MentorDashboard, MentorTeams } from './screens/MentorScreens';
 
 // Participant screens
 import {
-  ParticipantDashboard, TeamDetail, SubmitProject, ViewResults, NotificationsPage, MyInvitationsPage,
+  ParticipantDashboard, TeamDetail, SubmitProject, NotificationsPage, MyInvitationsPage,
 } from './screens/ParticipantScreens';
+
 
 // Template screens
 import { TemplateCenter } from './screens/TemplateScreens';
@@ -46,6 +48,10 @@ import { RankingScreen } from './screens/RankingScreen';
 
 //Award screen (can be accessed by Coordinator and Super Coordinator)
 import { AwardsPage } from './screens/AwardPage';
+
+import { ResultPublicationScreen } from './screens/ResultPublicationScreen';
+
+import { ParticipantResultScreen } from './screens/ParticipantResultScreen';
 
 // ── Breadcrumb map ────────────────────────────────────────────────────────────
 const breadcrumbs: Record<string, string[]> = {
@@ -351,7 +357,7 @@ function ScreenRenderer({ screen, role, onNavigate, selectedEventId, onSelectEve
         />
       );
     case 'coord-awards': return <AwardsPage />;
-    case 'coord-results': return <ResultPublication />;
+    case 'coord-results': return <ResultPublicationScreen eventId={selectedEventId || undefined} />;
     case 'coord-rbl': return <RBLDashboard />;
 
     // Judge
@@ -369,7 +375,7 @@ function ScreenRenderer({ screen, role, onNavigate, selectedEventId, onSelectEve
     case 'participant-team': return <TeamDetail onNavigate={onNavigate} />;
     case 'participant-invitations': return <MyInvitationsPage />;
     case 'participant-submit': return <SubmitProject />;
-    case 'participant-results': return <ViewResults />;
+    case 'participant-results': return <ParticipantResultScreen />;
     case 'participant-notifications': return <NotificationsPage />;
 
     // Templates
