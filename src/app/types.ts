@@ -47,7 +47,15 @@ export interface ApiResponse<T> {
   timestamp: string;
 }
 
-
+export interface ParticipantResultResponse {
+  teamId: number;
+  teamName: string;
+  categoryName: string;
+  rankPosition: number;
+  totalScore: number;
+  awardType: string | null;
+  awardDescription: string | null;
+}
 
 export type Screen = string;
 

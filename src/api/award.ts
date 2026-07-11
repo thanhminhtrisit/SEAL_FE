@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import { AwardResponse, AwardCreateRequest, ApiResponse } from '../app/types';
+import { AwardResponse, AwardCreateRequest, ApiResponse, ParticipantResultResponse } from '../app/types';
 
 export const award = {
   getEvents: async () => {
@@ -48,5 +48,15 @@ export const award = {
     const response = await apiClient.put(`/api/awards/events/${eventId}/publish`);
     return response.data;
   },
+
+  getMyResult: async (eventId: number): Promise<ParticipantResultResponse> => {
+    const token = localStorage.getItem('token');
+    const response = await apiClient.get(`/api/awards/events/${eventId}/my-result`, {
+      headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+    });
+    return response.data?.data || response.data;
+  },
+
+
   
 };
