@@ -57,6 +57,59 @@ function isValidHttpUrl(value: string): boolean {
   }
 }
 
+type TeamRoundRow = {
+  team: SubmissionMyOverviewTeam;
+  round: SubmissionMyOverviewRound;
+  submitted: boolean;
+  closed: boolean;
+  deadlinePassed: boolean;
+  deadlineMs: number | null;
+  latestSubmittedMs: number;
+  latestAttemptNumber: number;
+};
+
+type SubmissionStatusFilter = 'ALL' | 'SUBMITTED' | 'NO_SUBMISSION' | 'CLOSED';
+type SubmissionArtifactFilter = 'ALL' | 'REPO' | 'DEMO' | 'SLIDE' | 'REPORT';
+type SubmissionSortMode =
+  | 'DEFAULT'
+  | 'SUBMITTED_NEWEST'
+  | 'SUBMITTED_OLDEST'
+  | 'EVENT_ASC'
+  | 'EVENT_DESC'
+  | 'ROUND_ASC'
+  | 'ROUND_DESC'
+  | 'ATTEMPT_DESC'
+  | 'ATTEMPT_ASC'
+  | 'DEADLINE_ASC'
+  | 'DEADLINE_DESC'
+  | 'STATUS';
+
+function formatDateTime(value?: string | null): string {
+  if (!value) return 'Not configured';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString('vi-VN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+}
+
+function roleLabel(role?: string | null): string {
+  if (!role) return 'Member';
+  if (role === 'LEADER') return 'Leader';
+  return role.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function roundWindowLabel(round: SubmissionMyOverviewRound, deadlinePassed: boolean): string {
+  if (deadlinePassed) return 'Deadline passed';
+  if (round.status === 'OPEN_FOR_SUBMISSION') return 'Open';
+  if (round.status === 'DRAFT') return 'Not open yet';
+  return 'Closed';
+}
+
 const myTeam = {
   name: 'Code Seals',
   description: 'We build scalable, user-friendly web applications using React and TypeScript.',
@@ -157,7 +210,7 @@ export function ParticipantDashboard({ onNavigate }: { onNavigate: (s: string) =
       <div className="grid grid-cols-4 gap-5">
         <KPICard title="My Team" value={primaryTeam?.teamName ?? '-'} subtitle={primaryTeam?.categoryName ?? 'View My Team'} icon={Users} accent="blue" />
         <KPICard title="Invitations" value={invitationCount ?? '...'} subtitle="Check My Invitations" icon={Inbox} accent="cyan" />
-        <KPICard title="Submission" value={latestSubmission ? `v${latestSubmission.submission.attemptNumber}` : '-'} subtitle={latestSubmission?.roundName ?? 'Submit Project'} icon={Send} accent="green" />
+        <KPICard title="Submission" value={latestSubmission ? `Attempt #${latestSubmission.submission.attemptNumber}` : '-'} subtitle={latestSubmission?.roundName ?? 'Submit Project'} icon={Send} accent="green" />
         <KPICard title="Notifications" value={unread} subtitle="Unread" icon={Bell} accent="amber" />
       </div>
 
@@ -390,7 +443,6 @@ export function TeamDetail({ onNavigate }: { onNavigate: (s: string) => void }) 
                 {team.eventName && <div><span className="text-slate-500">Event:</span> <span className="font-medium text-slate-800">{team.eventName}</span></div>}
                 {team.categoryName && <div><span className="text-slate-500">Category:</span> <span className="font-medium text-slate-800">{team.categoryName}</span></div>}
                 <div><span className="text-slate-500">Members:</span> <span className="font-medium text-slate-800">{memberCount} / 5</span></div>
-                <div><span className="text-slate-500">Team ID:</span> <span className="font-mono text-xs text-slate-600">#{team.id}</span></div>
               </div>
             </div>
 
@@ -708,6 +760,7 @@ export function MyInvitationsPage() {
 export function SubmitProject() {
   const auth = useAuth();
   const canEdit = auth.role === 'TEAM_LEADER';
+  const isDevMode = import.meta.env.DEV;
 
   const [overview, setOverview] = useState<SubmissionMyOverview | null>(null);
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null);
@@ -726,6 +779,14 @@ export function SubmitProject() {
   const [actionLoading, setActionLoading] = useState<'submit' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showFallback, setShowFallback] = useState(false);
+  const [eventFilter, setEventFilter] = useState('ALL');
+  const [roundFilter, setRoundFilter] = useState('ALL');
+  const [statusFilter, setStatusFilter] = useState<SubmissionStatusFilter>('ALL');
+  const [artifactFilter, setArtifactFilter] = useState<SubmissionArtifactFilter>('ALL');
+  const [submittedFrom, setSubmittedFrom] = useState('');
+  const [submittedTo, setSubmittedTo] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [sortMode, setSortMode] = useState<SubmissionSortMode>('DEFAULT');
 
   const selectedTeam = useMemo(
     () => overview?.teams.find(team => team.teamId === selectedTeamId) ?? overview?.teams[0] ?? null,
@@ -736,6 +797,157 @@ export function SubmitProject() {
     () => selectedTeam?.rounds.find(round => round.roundId === selectedRoundId) ?? selectedTeam?.rounds[0] ?? null,
     [selectedTeam, selectedRoundId],
   );
+
+  const isDeadlinePassed = useCallback((deadline?: string | null) => {
+    if (!deadline) return false;
+    const parsed = new Date(deadline);
+    return !Number.isNaN(parsed.getTime()) && parsed.getTime() < Date.now();
+  }, []);
+
+  const roundRows = useMemo<TeamRoundRow[]>(() => {
+    return safeArray(overview?.teams).flatMap(team => safeArray(team.rounds).map(round => {
+      const deadline = round.submissionDeadline ? new Date(round.submissionDeadline).getTime() : null;
+      const latestSubmitted = round.submission?.submittedAt
+        ? new Date(round.submission.submittedAt).getTime()
+        : 0;
+      const deadlinePassed = isDeadlinePassed(round.submissionDeadline);
+      const closed = round.status !== 'OPEN_FOR_SUBMISSION' || deadlinePassed;
+      return {
+        team,
+        round,
+        submitted: !!round.submission,
+        closed,
+        deadlinePassed,
+        deadlineMs: deadline && !Number.isNaN(deadline) ? deadline : null,
+        latestSubmittedMs: Number.isNaN(latestSubmitted) ? 0 : latestSubmitted,
+        latestAttemptNumber: round.submission?.attemptNumber ?? 0,
+      };
+    }));
+  }, [isDeadlinePassed, overview]);
+
+  const eventOptions = useMemo(
+    () => Array.from(new Map(roundRows.map(row => [row.team.eventName, row.team.eventName])).values()).sort(),
+    [roundRows],
+  );
+
+  const roundOptions = useMemo(
+    () => Array.from(new Map(
+      roundRows
+        .filter(row => eventFilter === 'ALL' || row.team.eventName === eventFilter)
+        .map(row => [row.round.roundName, row.round.roundName]),
+    ).values()).sort(),
+    [eventFilter, roundRows],
+  );
+
+  const filteredRoundRows = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    const fromMs = submittedFrom ? new Date(`${submittedFrom}T00:00:00`).getTime() : null;
+    const toMs = submittedTo ? new Date(`${submittedTo}T23:59:59`).getTime() : null;
+
+    const rows = roundRows.filter(row => {
+      const latest = row.round.submission;
+      if (eventFilter !== 'ALL' && row.team.eventName !== eventFilter) return false;
+      if (roundFilter !== 'ALL' && row.round.roundName !== roundFilter) return false;
+      if (statusFilter === 'SUBMITTED' && !latest) return false;
+      if (statusFilter === 'NO_SUBMISSION' && latest) return false;
+      if (statusFilter === 'CLOSED' && !row.closed) return false;
+      if (artifactFilter === 'REPO' && !latest?.repoUrl) return false;
+      if (artifactFilter === 'DEMO' && !latest?.demoUrl) return false;
+      if (artifactFilter === 'SLIDE' && !latest?.slideUrl) return false;
+      if (artifactFilter === 'REPORT' && !latest?.reportUrl) return false;
+      if (fromMs !== null && (!row.latestSubmittedMs || row.latestSubmittedMs < fromMs)) return false;
+      if (toMs !== null && (!row.latestSubmittedMs || row.latestSubmittedMs > toMs)) return false;
+      if (normalizedSearch) {
+        const haystack = [
+          row.team.teamName,
+          row.team.eventName,
+          row.team.categoryName,
+          row.round.roundName,
+          latest?.repoUrl,
+          latest?.demoUrl,
+          latest?.slideUrl,
+          latest?.reportUrl,
+          latest?.changeNote,
+        ].filter(Boolean).join(' ').toLowerCase();
+        if (!haystack.includes(normalizedSearch)) return false;
+      }
+      return true;
+    });
+
+    const byText = (a: string, b: string) => a.localeCompare(b);
+    return [...rows].sort((a, b) => {
+      switch (sortMode) {
+        case 'SUBMITTED_NEWEST':
+          return b.latestSubmittedMs - a.latestSubmittedMs;
+        case 'SUBMITTED_OLDEST':
+          return a.latestSubmittedMs - b.latestSubmittedMs;
+        case 'EVENT_ASC':
+          return byText(a.team.eventName, b.team.eventName);
+        case 'EVENT_DESC':
+          return byText(b.team.eventName, a.team.eventName);
+        case 'ROUND_ASC':
+          return byText(a.round.roundName, b.round.roundName);
+        case 'ROUND_DESC':
+          return byText(b.round.roundName, a.round.roundName);
+        case 'ATTEMPT_DESC':
+          return b.latestAttemptNumber - a.latestAttemptNumber;
+        case 'ATTEMPT_ASC':
+          return a.latestAttemptNumber - b.latestAttemptNumber;
+        case 'DEADLINE_ASC':
+          return (a.deadlineMs ?? Number.MAX_SAFE_INTEGER) - (b.deadlineMs ?? Number.MAX_SAFE_INTEGER);
+        case 'DEADLINE_DESC':
+          return (b.deadlineMs ?? 0) - (a.deadlineMs ?? 0);
+        case 'STATUS':
+          return byText(a.round.submission?.status ?? 'NO_SUBMISSION', b.round.submission?.status ?? 'NO_SUBMISSION');
+        case 'DEFAULT':
+        default: {
+          const aOpen = !a.closed ? 0 : 1;
+          const bOpen = !b.closed ? 0 : 1;
+          if (aOpen !== bOpen) return aOpen - bOpen;
+          const deadlineDiff = (a.deadlineMs ?? Number.MAX_SAFE_INTEGER) - (b.deadlineMs ?? Number.MAX_SAFE_INTEGER);
+          if (deadlineDiff !== 0) return deadlineDiff;
+          return b.latestSubmittedMs - a.latestSubmittedMs;
+        }
+      }
+    });
+  }, [artifactFilter, eventFilter, roundFilter, roundRows, searchTerm, sortMode, statusFilter, submittedFrom, submittedTo]);
+
+  const groupedRoundRows = useMemo(() => {
+    const groups = new Map<string, TeamRoundRow[]>();
+    filteredRoundRows.forEach(row => {
+      const key = row.team.eventName;
+      groups.set(key, [...(groups.get(key) ?? []), row]);
+    });
+    return Array.from(groups.entries());
+  }, [filteredRoundRows]);
+
+  const summary = useMemo(() => {
+    const openRows = roundRows.filter(row => !row.closed);
+    const submittedRows = roundRows.filter(row => row.submitted);
+    const noSubmissionRows = roundRows.filter(row => !row.submitted);
+    const totalAttempts = roundRows.reduce((sum, row) => sum + row.latestAttemptNumber, 0);
+    const nextDeadline = openRows
+      .filter(row => row.deadlineMs !== null)
+      .sort((a, b) => (a.deadlineMs ?? 0) - (b.deadlineMs ?? 0))[0];
+    return {
+      openRounds: openRows.length,
+      submittedRounds: submittedRows.length,
+      noSubmissionRounds: noSubmissionRows.length,
+      totalAttempts,
+      nextDeadlineLabel: nextDeadline ? formatDateTime(nextDeadline.round.submissionDeadline) : 'No open deadline',
+    };
+  }, [roundRows]);
+
+  const clearFilters = () => {
+    setEventFilter('ALL');
+    setRoundFilter('ALL');
+    setStatusFilter('ALL');
+    setArtifactFilter('ALL');
+    setSubmittedFrom('');
+    setSubmittedTo('');
+    setSearchTerm('');
+    setSortMode('DEFAULT');
+  };
 
   const submissionRequirements = selectedRound?.submissionRequirements ?? null;
   const artifactFields = [
@@ -777,11 +989,6 @@ export function SubmitProject() {
     (maximum, attempt) => Math.max(maximum, attempt.attemptNumber),
     0,
   ) + 1;
-  const isDeadlinePassed = (deadline?: string | null) => {
-    if (!deadline) return false;
-    const parsed = new Date(deadline);
-    return !Number.isNaN(parsed.getTime()) && parsed.getTime() < Date.now();
-  };
   const selectedDeadlinePassed = isDeadlinePassed(selectedRound?.submissionDeadline);
   const roundClosedByTime = selectedRound?.status !== 'OPEN_FOR_SUBMISSION' || selectedDeadlinePassed;
   const requiredArtifactsPresent = !!submissionRequirements
@@ -799,6 +1006,15 @@ export function SubmitProject() {
     && artifactUrlsValid
     && !roundClosedByTime
     && actionLoading === null;
+  const selectedCanSubmitReason = !selectedRound
+    ? 'Select a round first'
+    : !canEdit
+      ? 'Only the team leader can submit a new attempt for this team.'
+      : selectedDeadlinePassed
+        ? 'Deadline has passed.'
+        : selectedRound.status !== 'OPEN_FOR_SUBMISSION'
+          ? 'Submissions are closed for this round.'
+          : 'Yes. Fill the required artifacts and submit a new attempt.';
 
   const loadOverview = useCallback(async () => {
     setLoadingOverview(true);
@@ -889,7 +1105,7 @@ export function SubmitProject() {
       return;
     }
     if (!canEdit) {
-      setError('Only active team leaders can submit projects');
+      setError('Only the team leader can submit a new attempt for this team.');
       return;
     }
     if (!submissionRequirements) {
@@ -938,7 +1154,7 @@ export function SubmitProject() {
     const teamId = Number(manualTeamId);
     const roundId = Number(manualRoundId);
     if (!Number.isInteger(teamId) || teamId <= 0 || !Number.isInteger(roundId) || roundId <= 0) {
-      setError('Manual teamId and roundId must be positive numbers');
+      setError('Manual lookup values must be positive numbers');
       return;
     }
 
@@ -948,14 +1164,14 @@ export function SubmitProject() {
       const current = await getCurrentSubmission(teamId, roundId);
       setSubmission(current);
       await loadSubmissionData(teamId, roundId, current.submissionId);
-      toast.success('Loaded submission by teamId and roundId');
+      toast.success('Loaded submission by developer lookup values');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load submission';
       setSubmission(null);
       setSubmissionHistory([]);
       setError(message);
       if (message.toLowerCase().includes('not found')) {
-        toast.message('No submission yet for that team/round');
+        toast.message('No submission yet for that team and round');
       } else {
         toast.error(message);
       }
@@ -967,8 +1183,8 @@ export function SubmitProject() {
   return (
     <div className="p-7 space-y-5">
       <PageHeader
-        title="Project Submission Tracking"
-        subtitle="Choose your team and round, then submit a new official attempt"
+        title="My Team Submissions"
+        subtitle="Track your team's submission attempts, deadlines, and required artifacts for each round."
         actions={
           <button
             onClick={loadOverview}
@@ -990,6 +1206,121 @@ export function SubmitProject() {
           </div>
         </div>
       )}
+
+      <div className="grid grid-cols-5 gap-4">
+        <KPICard title="Open Rounds" value={summary.openRounds} subtitle="Can accept attempts" icon={Clock} accent="green" />
+        <KPICard title="Submitted Rounds" value={summary.submittedRounds} subtitle="At least one attempt" icon={CheckCircle2} accent="blue" />
+        <KPICard title="No Submission" value={summary.noSubmissionRounds} subtitle="No attempt yet" icon={Inbox} accent="amber" />
+        <KPICard title="Total Attempts" value={summary.totalAttempts} subtitle="Your team's attempts" icon={Send} accent="cyan" />
+        <KPICard title="Next Deadline" value="" subtitle={summary.nextDeadlineLabel} icon={Calendar} accent="purple" />
+      </div>
+
+      {selectedTeam && selectedRound && (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+          <div className="mb-4">
+            <h3 className="font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>Current Team Context</h3>
+            <p className="text-sm text-slate-500">This screen only shows submissions for your active team memberships.</p>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="rounded-lg bg-slate-50 p-4">
+              <p className="text-xs uppercase tracking-wide text-slate-500">Event</p>
+              <p className="mt-1 text-sm font-semibold text-slate-900">{selectedTeam.eventName}</p>
+              <p className="mt-1 text-xs text-slate-500">Participant submission</p>
+            </div>
+            <div className="rounded-lg bg-slate-50 p-4">
+              <p className="text-xs uppercase tracking-wide text-slate-500">Round</p>
+              <div className="mt-1 flex items-center gap-2">
+                <p className="text-sm font-semibold text-slate-900">{selectedRound.roundName}</p>
+                <StatusBadge status={selectedRound.status} />
+              </div>
+              <p className="mt-1 text-xs text-slate-500">
+                Deadline: {formatDateTime(selectedRound.submissionDeadline)}
+              </p>
+            </div>
+            <div className="rounded-lg bg-slate-50 p-4">
+              <p className="text-xs uppercase tracking-wide text-slate-500">Team</p>
+              <p className="mt-1 text-sm font-semibold text-slate-900">{selectedTeam.teamName}</p>
+              <p className="mt-1 text-xs text-slate-500">{selectedTeam.categoryName} · {roleLabel(selectedTeam.memberRole)} · Active membership</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+        <div className="flex items-start justify-between gap-4 mb-4">
+          <div>
+            <h3 className="font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>Find My Team Rounds</h3>
+            <p className="text-sm text-slate-500">Filter and sort only the rounds and attempts connected to your own teams.</p>
+          </div>
+          <button onClick={clearFilters} className="text-xs text-blue-700 hover:text-blue-800 font-medium">
+            Clear filters
+          </button>
+        </div>
+        <div className="grid grid-cols-4 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Event</label>
+            <select value={eventFilter} onChange={e => { setEventFilter(e.target.value); setRoundFilter('ALL'); }} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700">
+              <option value="ALL">All my events</option>
+              {eventOptions.map(eventName => <option key={eventName} value={eventName}>{eventName}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Round</label>
+            <select value={roundFilter} onChange={e => setRoundFilter(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700">
+              <option value="ALL">All rounds</option>
+              {roundOptions.map(roundName => <option key={roundName} value={roundName}>{roundName}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Submission status</label>
+            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as SubmissionStatusFilter)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700">
+              <option value="ALL">All</option>
+              <option value="SUBMITTED">Submitted</option>
+              <option value="NO_SUBMISSION">No submission yet</option>
+              <option value="CLOSED">Closed / cannot submit</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Artifact</label>
+            <select value={artifactFilter} onChange={e => setArtifactFilter(e.target.value as SubmissionArtifactFilter)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700">
+              <option value="ALL">Any artifact</option>
+              <option value="REPO">Has repository</option>
+              <option value="DEMO">Has demo</option>
+              <option value="SLIDE">Has slide</option>
+              <option value="REPORT">Has report</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Submitted from</label>
+            <input type="date" value={submittedFrom} onChange={e => setSubmittedFrom(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Submitted to</label>
+            <input type="date" value={submittedTo} onChange={e => setSubmittedTo(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Sort by</label>
+            <select value={sortMode} onChange={e => setSortMode(e.target.value as SubmissionSortMode)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700">
+              <option value="DEFAULT">Open rounds, nearest deadline</option>
+              <option value="SUBMITTED_NEWEST">Submitted newest first</option>
+              <option value="SUBMITTED_OLDEST">Submitted oldest first</option>
+              <option value="EVENT_ASC">Event A-Z</option>
+              <option value="EVENT_DESC">Event Z-A</option>
+              <option value="ROUND_ASC">Round A-Z</option>
+              <option value="ROUND_DESC">Round Z-A</option>
+              <option value="ATTEMPT_DESC">Attempt highest first</option>
+              <option value="ATTEMPT_ASC">Attempt lowest first</option>
+              <option value="DEADLINE_ASC">Deadline nearest first</option>
+              <option value="DEADLINE_DESC">Deadline farthest first</option>
+              <option value="STATUS">Submission status</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Search</label>
+            <input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Round, event, URL, note..." className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" />
+          </div>
+        </div>
+      </div>
 
       <div className="grid grid-cols-3 gap-5">
         <div className="col-span-2 space-y-5">
@@ -1024,11 +1355,10 @@ export function SubmitProject() {
                         <div>
                           <div className="flex items-center gap-2">
                             <h4 className="font-semibold text-slate-900">{team.teamName}</h4>
-                            <span className="text-[11px] text-slate-500">#{team.teamId}</span>
                           </div>
                           <p className="text-sm text-slate-500 mt-0.5">{team.eventName} • {team.categoryName}</p>
                         </div>
-                        <span className="text-xs font-medium text-blue-700 bg-blue-50 px-2 py-1 rounded-full">{team.memberRole}</span>
+                        <span className="text-xs font-medium text-blue-700 bg-blue-50 px-2 py-1 rounded-full">{roleLabel(team.memberRole)}</span>
                       </div>
                     </button>
                   );
@@ -1038,6 +1368,107 @@ export function SubmitProject() {
           </div>
 
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>Round Submission Status</h3>
+                <p className="text-sm text-slate-500">Grouped by event, then round, for your teams only.</p>
+              </div>
+              <span className="text-xs text-slate-500">{filteredRoundRows.length} matching rounds</span>
+            </div>
+
+            {loadingOverview ? (
+              <p className="text-sm text-slate-500">Loading round overview...</p>
+            ) : roundRows.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                You are not currently assigned to an active team.
+              </div>
+            ) : filteredRoundRows.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                <p>No submissions match the current filters.</p>
+                <button onClick={clearFilters} className="mt-2 text-xs text-blue-700 font-medium hover:text-blue-800">Clear filters</button>
+              </div>
+            ) : (
+              <div className="space-y-5">
+                {groupedRoundRows.map(([eventName, rows]) => (
+                  <div key={eventName} className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Calendar className="w-4 h-4 text-blue-700" />
+                      <h4 className="text-sm font-semibold text-slate-900">{eventName}</h4>
+                    </div>
+                    {rows.map(({ team, round, deadlinePassed, closed }) => {
+                      const isSelected = team.teamId === selectedTeam?.teamId && round.roundId === selectedRound?.roundId;
+                      const latest = round.submission;
+                      return (
+                        <div
+                          key={`${team.teamId}-${round.roundId}`}
+                          onClick={() => {
+                            setSelectedTeamId(team.teamId);
+                            setSelectedRoundId(round.roundId);
+                          }}
+                          className={`w-full text-left rounded-xl border p-4 transition-colors cursor-pointer ${isSelected ? 'border-blue-300 bg-blue-50/50' : 'border-slate-200 bg-white hover:bg-slate-50'}`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h4 className="font-semibold text-slate-900">{round.roundName}</h4>
+                                <span className="text-[11px] font-medium text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full">Round {round.orderNumber}</span>
+                                <StatusBadge status={round.status} />
+                              </div>
+                              <p className="text-sm text-slate-500 mt-1">
+                                {team.teamName} · {team.categoryName} · Deadline {formatDateTime(round.submissionDeadline)}
+                              </p>
+                              <div className="flex flex-wrap items-center gap-2 mt-2">
+                                <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${closed ? 'text-rose-700 bg-rose-50' : 'text-emerald-700 bg-emerald-50'}`}>
+                                  {closed ? <AlertTriangle className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                                  {roundWindowLabel(round, deadlinePassed)}
+                                </span>
+                                {latest ? (
+                                  <>
+                                    <span className="inline-flex items-center gap-1.5 text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full text-xs font-medium">
+                                      <CheckCircle2 className="w-3.5 h-3.5" /> Submitted
+                                    </span>
+                                    <span className="text-xs text-slate-500">
+                                      Latest Attempt #{latest.attemptNumber}
+                                      {latest.submittedAt ? ` · submitted ${formatDateTime(latest.submittedAt)}` : ''}
+                                    </span>
+                                  </>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1.5 text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full text-xs font-medium">
+                                    <Info className="w-3.5 h-3.5" /> No submission yet
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                              {latest ? (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedTeamId(team.teamId);
+                                    setSelectedRoundId(round.roundId);
+                                  }}
+                                  className="text-xs bg-slate-100 text-slate-700 hover:bg-slate-200 px-2.5 py-1.5 rounded-lg font-medium"
+                                >
+                                  View Details
+                                </button>
+                              ) : !closed ? (
+                                <span className="text-xs text-slate-500">Select to submit</span>
+                              ) : (
+                                <span className="text-xs text-slate-400">Read-only</span>
+                              )}
+                              <ChevronRight className={`w-4 h-4 flex-shrink-0 ${isSelected ? 'text-blue-700' : 'text-slate-400'}`} />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="hidden">
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <h3 className="font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>Rounds</h3>
@@ -1066,7 +1497,6 @@ export function SubmitProject() {
                         <div className="min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
                             <h4 className="font-semibold text-slate-900">{round.roundName}</h4>
-                            <span className="text-[11px] text-slate-500">#{round.roundId}</span>
                             <span className="text-[11px] font-medium text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full">Order {round.orderNumber}</span>
                           </div>
                           <p className="text-sm text-slate-500 mt-1">
@@ -1121,11 +1551,11 @@ export function SubmitProject() {
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h3 className="font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>Selected Submission</h3>
+                <h3 className="font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>Latest Attempt</h3>
                 <p className="text-sm text-slate-500">
                   {selectedTeam && selectedRound
                     ? `${selectedTeam.teamName} / ${selectedRound.roundName}`
-                    : 'Select a round to inspect submission detail'}
+                    : 'Select a round to inspect latest attempt and history'}
                 </p>
               </div>
               {loadingDetail && <span className="text-xs text-slate-500">Loading detail...</span>}
@@ -1138,28 +1568,33 @@ export function SubmitProject() {
                   <div>
                     <p className={`text-sm font-semibold ${displayedSubmission ? 'text-emerald-800' : 'text-slate-800'}`}>
                       {displayedSubmission
-                        ? `Latest Submission: Attempt #${displayedSubmission.attemptNumber}`
+                        ? `Latest Attempt #${displayedSubmission.attemptNumber}`
                         : 'No submission yet'}
                     </p>
                     <p className={`text-sm mt-0.5 ${displayedSubmission ? 'text-emerald-700' : 'text-slate-600'}`}>
                       {latestSubmission
-                        ? `Submission #${latestSubmission.submissionId} is an official immutable attempt.`
+                        ? `Attempt #${latestSubmission.attemptNumber} is the latest official attempt.`
                         : selectedDeadlinePassed
                           ? 'The submission deadline has passed. You can only view detail and history.'
-                          : `Complete the form below to create Submission Attempt #${nextAttemptNumber}.`}
+                          : canEdit
+                            ? `Complete the form below to create Submission Attempt #${nextAttemptNumber}.`
+                            : 'Only the team leader can submit a new attempt for this team.'}
                     </p>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3 text-sm mt-4">
+                <div className="grid grid-cols-3 gap-3 text-sm mt-4">
                   {[
-                    ['Status', displayedSubmission?.status ?? 'No submission yet'],
-                    ['Team', `${selectedTeam.teamName} (#${selectedTeam.teamId})`],
-                    ['Round', `${selectedRound.roundName} (#${selectedRound.roundId})`],
-                    ['Event', `${selectedTeam.eventName} (#${selectedTeam.eventId})`],
-                    ['Category', `${selectedTeam.categoryName} (#${selectedTeam.categoryId})`],
-                    ['Submitted At', displayedSubmission?.submittedAt ?? 'Not submitted'],
-                    ['Last Updated', displayedSubmission?.lastUpdatedAt ?? 'Not updated'],
+                    ['Event', selectedTeam.eventName],
+                    ['Round', selectedRound.roundName],
+                    ['Team', selectedTeam.teamName],
+                    ['Category', selectedTeam.categoryName],
+                    ['Round Status', selectedRound.status],
+                    ['Submission Deadline', formatDateTime(selectedRound.submissionDeadline)],
+                    ['Submission Window', roundWindowLabel(selectedRound, selectedDeadlinePassed)],
+                    ['Can Submit?', selectedCanSubmitReason],
+                    ['Attempt Status', displayedSubmission?.status ?? 'No submission yet'],
+                    ['Submitted At', displayedSubmission?.submittedAt ? formatDateTime(displayedSubmission.submittedAt) : 'Not submitted'],
                     ['Attempt', displayedSubmission ? `Attempt #${displayedSubmission.attemptNumber}` : 'None'],
                   ].map(([label, value]) => (
                     <div key={label} className="p-3 bg-slate-50 rounded-lg">
@@ -1171,7 +1606,7 @@ export function SubmitProject() {
 
                 {displayedSubmission && (
                   <div id="submission-detail" className="bg-white border border-slate-200 rounded-xl p-4 mt-4">
-                    <h4 className="text-sm font-semibold text-slate-900 mb-3">Latest Submission</h4>
+                    <h4 className="text-sm font-semibold text-slate-900 mb-3">Latest Attempt</h4>
                     <div className="space-y-2 text-sm">
                       {[
                         ['Repository', displayedSubmission.repoUrl],
@@ -1182,7 +1617,13 @@ export function SubmitProject() {
                       ].map(([label, value]) => (
                         <div key={label} className="flex gap-3 border-b border-slate-100 pb-2 last:border-0 last:pb-0">
                           <span className="w-28 text-slate-500 flex-shrink-0">{label}</span>
-                          <span className="text-slate-900 break-all">{value || '-'}</span>
+                          {value && label !== 'Change Note' ? (
+                            <a href={String(value)} target="_blank" rel="noreferrer" className="text-blue-700 hover:underline break-all inline-flex items-center gap-1">
+                              {String(value)} <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                            </a>
+                          ) : (
+                            <span className="text-slate-900 break-all">{value || '-'}</span>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -1191,12 +1632,14 @@ export function SubmitProject() {
 
                 <div className="bg-white border border-slate-200 rounded-xl p-4 mt-4">
                   <h4 className="text-sm font-semibold text-slate-900 mb-3">
-                    {roundClosedByTime ? 'Read-only Actions' : `Submit New Attempt #${nextAttemptNumber}`}
+                    {roundClosedByTime || !canEdit ? 'Read-only Actions' : `Submit New Attempt #${nextAttemptNumber}`}
                   </h4>
                   {roundClosedByTime ? (
                     <div className="space-y-3">
                       <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
-                        The submission deadline has passed. New attempts are no longer accepted.
+                        {selectedDeadlinePassed
+                          ? 'The submission deadline has passed. New attempts are no longer accepted.'
+                          : 'Submissions are closed for this round. New attempts are not accepted right now.'}
                       </div>
                       <div className="flex flex-wrap gap-3">
                         <button
@@ -1216,6 +1659,26 @@ export function SubmitProject() {
                   ) : !submissionRequirements ? (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
                       Submission requirements could not be loaded. Submission is disabled; reload the page or contact the coordinator.
+                    </div>
+                  ) : !canEdit ? (
+                    <div className="space-y-3">
+                      <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+                        Only the team leader can submit a new attempt for this team.
+                      </div>
+                      <div className="flex flex-wrap gap-3">
+                        <button
+                          onClick={() => document.getElementById('submission-detail')?.scrollIntoView({ behavior: 'smooth' })}
+                          className="text-sm font-semibold px-4 py-2 rounded-lg border border-slate-200 hover:bg-slate-50"
+                        >
+                          View Details
+                        </button>
+                        <button
+                          onClick={() => document.getElementById('submission-history')?.scrollIntoView({ behavior: 'smooth' })}
+                          className="text-sm font-semibold px-4 py-2 rounded-lg border border-slate-200 hover:bg-slate-50"
+                        >
+                          View Submission History
+                        </button>
+                      </div>
                     </div>
                   ) : (
                     <div className="space-y-4">
@@ -1308,15 +1771,26 @@ export function SubmitProject() {
                               <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded ${attempt.submissionId === latestSubmission?.submissionId ? 'bg-blue-800 text-white' : 'bg-slate-100 text-slate-600'}`}>Attempt #{attempt.attemptNumber}</span>
                               <span className="text-xs text-slate-600 font-medium">{attempt.status}</span>
                             </div>
-                            <span className="text-xs font-mono text-slate-400">{attempt.submittedAt ?? attempt.lastUpdatedAt ?? "-"}</span>
+                            <span className="text-xs font-mono text-slate-400">{formatDateTime(attempt.submittedAt ?? attempt.lastUpdatedAt)}</span>
                           </div>
                           <p className="text-xs text-slate-600 mb-2">{attempt.changeNote || 'No change note'}</p>
                           <div className="grid grid-cols-2 gap-2 text-xs">
-                            <span className="text-slate-500 break-all">Repo: <span className="text-slate-800">{attempt.repoUrl || '-'}</span></span>
-                            <span className="text-slate-500 break-all">Demo: <span className="text-slate-800">{attempt.demoUrl || '-'}</span></span>
-                            <span className="text-slate-500 break-all">Slides: <span className="text-slate-800">{attempt.slideUrl || '-'}</span></span>
-                            <span className="text-slate-500 break-all">Report: <span className="text-slate-800">{attempt.reportUrl || '-'}</span></span>
-                            <span className="text-slate-500">Submitted by: <span className="text-slate-800">{attempt.submittedBy || '-'}</span></span>
+                            {[
+                              ['Repository', attempt.repoUrl],
+                              ['Demo', attempt.demoUrl],
+                              ['Slides', attempt.slideUrl],
+                              ['Report', attempt.reportUrl],
+                            ].map(([label, url]) => (
+                              <div key={label} className="text-slate-500 break-all">
+                                {label}: {url ? (
+                                  <a href={String(url)} target="_blank" rel="noreferrer" className="text-blue-700 hover:underline inline-flex items-center gap-1">
+                                    Open <ExternalLink className="w-3 h-3" />
+                                  </a>
+                                ) : (
+                                  <span className="text-slate-800">-</span>
+                                )}
+                              </div>
+                            ))}
                           </div>
                           <div className="mt-3 flex items-center justify-between gap-3">
                             <span className="text-xs text-slate-500">
@@ -1338,36 +1812,38 @@ export function SubmitProject() {
         </div>
 
         <div className="space-y-4">
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h4 className="text-sm font-semibold text-slate-900">Demo fallback</h4>
-              <button onClick={() => setShowFallback(v => !v)} className="text-xs text-blue-700 hover:text-blue-800">{showFallback ? 'Hide' : 'Show'}</button>
-            </div>
-            {showFallback ? (
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-1">teamId</label>
-                    <input value={manualTeamId} onChange={e => setManualTeamId(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-1">roundId</label>
-                    <input value={manualRoundId} onChange={e => setManualRoundId(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" />
-                  </div>
-                </div>
-                <button onClick={loadManualSubmission} className="w-full flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors">
-                  <Clock className="w-4 h-4" /> Load by IDs
-                </button>
-                <p className="text-xs text-slate-500">Use this only as a fallback when testing direct submission lookup.</p>
+          {isDevMode && (
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-sm font-semibold text-slate-900">Developer lookup</h4>
+                <button onClick={() => setShowFallback(v => !v)} className="text-xs text-blue-700 hover:text-blue-800">{showFallback ? 'Hide' : 'Show'}</button>
               </div>
-            ) : (
-              <p className="text-xs text-slate-500">Primary flow uses your active teams and rounds from backend overview.</p>
-            )}
-          </div>
+              {showFallback ? (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">Team lookup key</label>
+                      <input value={manualTeamId} onChange={e => setManualTeamId(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">Round lookup key</label>
+                      <input value={manualRoundId} onChange={e => setManualRoundId(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" />
+                    </div>
+                  </div>
+                  <button onClick={loadManualSubmission} className="w-full flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors">
+                    <Clock className="w-4 h-4" /> Load developer lookup
+                  </button>
+                  <p className="text-xs text-slate-500">Developer-only fallback for direct submission lookup.</p>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500">Primary flow uses your active teams and rounds from backend overview.</p>
+              )}
+            </div>
+          )}
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
             <p className="text-xs text-slate-500 flex items-center gap-1.5">
               <Info className="w-3.5 h-3.5" />
-              {canEdit ? 'You can create, update, and submit for your active leader team.' : 'You can inspect submission data, but only active team leaders can mutate it.'}
+              {canEdit ? 'You can submit new official attempts for your active leader team.' : 'You can inspect submission data, but only active team leaders can submit new attempts.'}
             </p>
           </div>
         </div>

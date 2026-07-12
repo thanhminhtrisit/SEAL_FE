@@ -10,6 +10,7 @@ export interface JudgeAssignedSubmission {
   categoryName: string;
   roundId: number;
   roundName: string;
+  roundStatus?: string | null;
   eventId: number;
   eventName: string;
   attemptNumber: number;
@@ -45,6 +46,7 @@ export interface EvaluationDetail {
   judgeId: number;
   submissionId: number;
   roundId: number;
+  roundStatus?: string | null;
   eventId?: number | null;
   eventName?: string | null;
   teamId?: number | null;
@@ -81,6 +83,26 @@ export interface EvaluationAuditEntry {
   actorName?: string | null;
   actorEmail?: string | null;
   createdAt?: string | null;
+}
+
+export interface EvaluationHistoryItem {
+  actionType: string;
+  actionLabel: string;
+  actorName?: string | null;
+  criterionName?: string | null;
+  oldScoreValue?: string | null;
+  newScoreValue?: string | null;
+  oldComment?: string | null;
+  newComment?: string | null;
+  oldStatus?: string | null;
+  newStatus?: string | null;
+  occurredAt?: string | null;
+  description?: string | null;
+}
+
+export interface EvaluationHistory {
+  evaluationStatus?: string | null;
+  items: EvaluationHistoryItem[];
 }
 
 export interface StartEvaluationRequest {
@@ -130,6 +152,11 @@ export async function getEvaluation(evaluationId: number): Promise<EvaluationDet
 export async function getEvaluationAudit(evaluationId: number): Promise<EvaluationAuditEntry[]> {
   const res = await apiClient.get(`/api/evaluations/${evaluationId}/audit`);
   return unwrap<EvaluationAuditEntry[]>(res.data) ?? [];
+}
+
+export async function getEvaluationHistory(evaluationId: number): Promise<EvaluationHistory> {
+  const res = await apiClient.get(`/api/evaluations/${evaluationId}/history`);
+  return unwrap<EvaluationHistory>(res.data) ?? { items: [] };
 }
 
 export async function saveDraftScores(
