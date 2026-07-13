@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { award } from '../../api/award';
 import { AwardResponse } from '../../app/types';
 import { toast } from 'sonner';
@@ -20,6 +20,9 @@ export const AwardsPage: React.FC = () => {
   const [teamId, setTeamId] = useState<string>('');
   const [awardType, setAwardType] = useState<string>('');
   const [description, setDescription] = useState<string>('');
+
+  const [filterCategoryName, setFilterCategoryName] = useState<string>('');
+  const [filterAwardType, setFilterAwardType] = useState<string>('');
 
   const getErrorMessage = (err: unknown) => {
     if (err instanceof Error && err.message.trim()) {
@@ -70,6 +73,10 @@ export const AwardsPage: React.FC = () => {
       setSelectedCategoryId('');
       setEligibleTeams([]);
       setTeamId('');
+
+      // Reset các bộ lọc khi đổi sự kiện
+      setFilterCategoryName(''); 
+      setFilterAwardType('');    
     } else {
       setCategories([]);
       setAwards([]);
@@ -186,6 +193,27 @@ export const AwardsPage: React.FC = () => {
       toast.error(getErrorMessage(err));
     } finally {
       setIsBatchProcessing(false);
+    }
+  };
+
+  const filteredAwards = useMemo(() => {
+    return awards.filter(item => {
+      const matchCategory = filterCategoryName ? item.categoryName === filterCategoryName : true;
+      const matchAwardType = filterAwardType ? item.awardType === filterAwardType : true;
+      return matchCategory && matchAwardType;
+    });
+  }, [awards, filterCategoryName, filterAwardType]);
+
+  const handleDeleteAward = async (awardId: number) => {
+    if (!confirm('Bạn có chắc chắn muốn xóa giải thưởng này không? Hành động này không thể hoàn tác.')) {
+      return;
+    }
+    try {
+      await award.deleteAward(awardId);
+      toast.success('Xóa giải thưởng thành công!');
+      loadAwards(Number(selectedEventId)); // Tải lại danh sách
+    } catch (err) {
+      toast.error(getErrorMessage(err));
     }
   };
 
@@ -366,48 +394,73 @@ export const AwardsPage: React.FC = () => {
 
         {/* CỘT HIỂN THỊ DANH SÁCH GIẢI THƯỞNG */}
         <div className="lg:col-span-2 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-          <h2 className="text-lg font-bold text-slate-800 mb-4">
-            {selectedEventId ? 'Danh Sách Đội Đoạt Giải Hiện Tại' : 'Vui lòng chọn Sự kiện để xem danh sách giải'}
-          </h2>
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4">
+            <h2 className="text-lg font-bold text-slate-800">
+              {selectedEventId ? 'Danh Sách Đội Đoạt Giải Hiện Tại' : 'Vui lòng chọn Sự kiện để xem danh sách giải'}
+            </h2>
+            
+            {/* GIAO DIỆN FILTER */}
+            {selectedEventId && (
+              <div className="flex gap-2 w-full md:w-auto">
+                <select 
+                  value={filterCategoryName}
+                  onChange={(e) => setFilterCategoryName(e.target.value)}
+                  className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm bg-slate-50 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="">Tất cả Hạng mục</option>
+                  {categories.map(cat => (
+                    <option key={cat.id} value={cat.name}>{cat.name}</option>
+                  ))}
+                </select>
+
+                <select 
+                  value={filterAwardType}
+                  onChange={(e) => setFilterAwardType(e.target.value)}
+                  className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm bg-slate-50 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="">Tất cả Giải thưởng</option>
+                  {awardTypes.map(type => (
+                    <option key={type.code} value={type.code}>{type.label}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
           
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50">
-                  {/* THÊM 2 CỘT MỚI VÀO ĐÂY */}
                   <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Sự Kiện</th>
                   <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Hạng Mục</th>
                   <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Tên Đội</th>
                   <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Giải Thưởng</th>
                   <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Chi Tiết Khen Thưởng</th>
+                  <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase text-right">Thao Tác</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {!selectedEventId ? (
                   <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-sm text-slate-400 italic">
+                    <td colSpan={6} className="px-4 py-8 text-center text-sm text-slate-400 italic">
                       Hãy chọn một sự kiện từ form bên trái để xem dữ liệu.
                     </td>
                   </tr>
-                ) : awards.length === 0 ? (
+                ) : filteredAwards.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-sm text-slate-400">
-                      Chưa có giải thưởng nào được ghi nhận cho sự kiện này.
+                    <td colSpan={6} className="px-4 py-8 text-center text-sm text-slate-400">
+                      Chưa có giải thưởng nào phù hợp với bộ lọc hiện tại.
                     </td>
                   </tr>
                 ) : (
-                  awards.map((item: any) => (
+                  filteredAwards.map((item: any) => (
                     <tr key={item.awardId} className="hover:bg-slate-50/50 transition-colors">
-                      {/* BỔ SUNG DATA SỰ KIỆN */}
                       <td className="px-4 py-4 text-sm text-slate-600 max-w-[150px] truncate" title={item.eventName}>
                         {item.eventName}
                       </td>
-                      
-                      {/* BỔ SUNG DATA HẠNG MỤC */}
                       <td className="px-4 py-4 text-sm font-medium text-slate-700 whitespace-nowrap">
                         {item.categoryName}
                       </td>
-
                       <td className="px-4 py-4 text-sm font-semibold text-slate-900 whitespace-nowrap">
                         {item.teamName}
                       </td>
@@ -418,6 +471,14 @@ export const AwardsPage: React.FC = () => {
                       </td>
                       <td className="px-4 py-4 text-sm text-slate-600 max-w-[200px] truncate" title={item.description}>
                         {item.description || 'Không có mô tả đi kèm.'}
+                      </td>
+                      <td className="px-4 py-4 text-right">
+                        <button 
+                          onClick={() => handleDeleteAward(item.awardId)}
+                          className="text-red-500 hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded transition-colors text-sm font-medium"
+                        >
+                          Xóa
+                        </button>
                       </td>
                     </tr>
                   ))

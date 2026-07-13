@@ -11,7 +11,7 @@ interface ResultPublicationProps {
 interface EventData {
   id: number;
   name: string;
-  status?: string; // Bổ sung trường status
+  status?: string; 
 }
 
 interface Category {
@@ -173,10 +173,10 @@ export const ResultPublicationScreen: React.FC<ResultPublicationProps> = ({ even
       <div className="flex items-start justify-between mb-5">
         <div>
           <h1 className="text-xl font-bold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>
-            Publish Results
+            Công Bố Kết Quả
           </h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            Preview and publish final results to participants
+            Xem trước và công bố kết quả chung cuộc cho thí sinh
           </p>
         </div>
       </div>
@@ -220,15 +220,15 @@ export const ResultPublicationScreen: React.FC<ResultPublicationProps> = ({ even
           <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-start gap-3">
             <Eye className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
             <div>
-              <p className="text-sm font-semibold text-blue-800">Results Preview (Not Yet Published)</p>
-              <p className="text-sm text-blue-700 mt-1">Results are only visible to you. Participants cannot see rankings, scores, or awards until you publish.</p>
+              <p className="text-sm font-semibold text-blue-800">Xem Trước Kết Quả (Chưa Công Bố)</p>
+              <p className="text-sm text-blue-700 mt-1">Kết quả hiện chỉ hiển thị với bạn. Thí sinh không thể xem bảng xếp hạng, điểm số hoặc giải thưởng cho đến khi bạn công bố.</p>
             </div>
           </div>
           
           <div className="bg-white rounded-xl shadow-sm border border-slate-200">
             <div className="px-5 py-4 border-b border-slate-100">
               <h3 className="font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>
-                Final Results Preview
+                Xem Trước Kết Quả Chung Cuộc
               </h3>
             </div>
 
@@ -274,10 +274,10 @@ export const ResultPublicationScreen: React.FC<ResultPublicationProps> = ({ even
           
           <div className="flex items-center gap-3">
             <button className="flex items-center gap-2 border border-slate-200 text-slate-600 text-sm px-4 py-2 rounded-lg hover:bg-slate-50">
-              <Download className="w-4 h-4" /> Export CSV
+              <Download className="w-4 h-4" /> Xuất CSV
             </button>
             <button className="flex items-center gap-2 border border-slate-200 text-slate-600 text-sm px-4 py-2 rounded-lg hover:bg-slate-50">
-              <Download className="w-4 h-4" /> Export Excel
+              <Download className="w-4 h-4" /> Xuất Excel
             </button>
             
             <button 
@@ -287,7 +287,7 @@ export const ResultPublicationScreen: React.FC<ResultPublicationProps> = ({ even
                 ${isPublishing || !currentEventId || teams.length === 0 ? 'bg-emerald-400 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700 shadow-sm'}`}
             >
               <Globe className="w-4 h-4" />
-              Publish & Notify Participants
+              Công Bố & Thông Báo Cho Thí Sinh
             </button>
           </div>
         </div>
