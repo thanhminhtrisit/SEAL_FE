@@ -222,6 +222,10 @@ export function TeamDetail({ onNavigate }: { onNavigate: (s: string) => void }) 
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviting, setInviting] = useState(false);
 
+  // A user can belong to one team PER EVENT, so across events they may have several teams.
+  const [myTeams, setMyTeams] = useState<SubmissionMyOverviewTeam[]>([]);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+
   // Load event list for create form
   useEffect(() => {
     getEvents()
@@ -242,41 +246,46 @@ export function TeamDetail({ onNavigate }: { onNavigate: (s: string) => void }) 
   }, [selectedEventId]);
 
   const hydrateTeam = useCallback(async () => {
-    const teamIdFromStorage = localStorage.getItem(LS_TEAM_ID);
-    if (teamIdFromStorage) {
-      const parsedTeamId = Number(teamIdFromStorage);
-      if (Number.isFinite(parsedTeamId)) {
-        try {
-          const teamData = await getTeam(parsedTeamId);
-          setTeamId(parsedTeamId);
-          setTeam({ ...teamData, members: safeArray(teamData.members) });
-          return true;
-        } catch {
-          localStorage.removeItem(LS_TEAM_ID);
-        }
-      } else {
-        localStorage.removeItem(LS_TEAM_ID);
-      }
-    }
-
+    // Load ALL of the user's teams (one per event) so they can switch between events.
     const overview = await getMySubmissionOverview();
-    const candidateTeam =
-      safeArray(overview.teams).find(t => t.memberRole === 'LEADER')
-      ?? safeArray(overview.teams)[0]
-      ?? null;
+    const teams = safeArray(overview.teams);
+    setMyTeams(teams);
 
-    if (!candidateTeam) {
+    if (teams.length === 0) {
       setTeamId(null);
       setTeam(null);
+      localStorage.removeItem(LS_TEAM_ID);
       return false;
     }
 
-    localStorage.setItem(LS_TEAM_ID, String(candidateTeam.teamId));
-    const teamData = await getTeam(candidateTeam.teamId);
-    setTeamId(candidateTeam.teamId);
+    const stored = Number(localStorage.getItem(LS_TEAM_ID));
+    const chosen =
+      teams.find(t => t.teamId === stored)
+      ?? teams.find(t => t.memberRole === 'LEADER')
+      ?? teams[0];
+
+    const teamData = await getTeam(chosen.teamId);
+    setTeamId(chosen.teamId);
     setTeam({ ...teamData, members: safeArray(teamData.members) });
+    localStorage.setItem(LS_TEAM_ID, String(chosen.teamId));
     return true;
   }, []);
+
+  const switchTeam = async (id: number) => {
+    if (id === teamId) return;
+    setLoadingTeam(true);
+    try {
+      const teamData = await getTeam(id);
+      setTeamId(id);
+      setTeam({ ...teamData, members: safeArray(teamData.members) });
+      localStorage.setItem(LS_TEAM_ID, String(id));
+      setShowCreateForm(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Không tải được team');
+    } finally {
+      setLoadingTeam(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -317,6 +326,12 @@ export function TeamDetail({ onNavigate }: { onNavigate: (s: string) => void }) 
       localStorage.setItem(LS_TEAM_ID, String(newTeam.id));
       setTeamId(newTeam.id);
       setTeam({ ...newTeam, members: safeArray(newTeam.members) });
+      setShowCreateForm(false);
+      setSelectedEventId('');
+      setSelectedCategoryId('');
+      setTeamName('');
+      setTeamDescription('');
+      try { setMyTeams(safeArray((await getMySubmissionOverview()).teams)); } catch { /* ignore refresh error */ }
       toast.success(`Team "${newTeam.name}" đã được tạo!`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Tạo team thất bại');
@@ -341,7 +356,9 @@ export function TeamDetail({ onNavigate }: { onNavigate: (s: string) => void }) 
   };
 
   const teamMembers = safeArray(team?.members);
-  const isLeader = teamMembers.some(m => m.userId === Number(userId) && m.role === 'LEADER');
+  const isLeader =
+    teamMembers.some(m => String(m.userId) === String(userId) && m.role === 'LEADER')
+    || (team?.leaderId != null && String(team.leaderId) === String(userId));
   const memberCount = teamMembers.length;
   const canInvite = isLeader && memberCount < 5;
 
@@ -355,8 +372,8 @@ export function TeamDetail({ onNavigate }: { onNavigate: (s: string) => void }) 
     );
   }
 
-  // Has team - show detail
-  if (team) {
+  // Has team - show detail (unless the user explicitly opened the create form for another event)
+  if (team && !showCreateForm) {
     const leader = teamMembers.find(m => m.role === 'LEADER');
     const members = teamMembers.filter(m => m.role === 'MEMBER');
     return (
@@ -374,6 +391,32 @@ export function TeamDetail({ onNavigate }: { onNavigate: (s: string) => void }) 
             ) : null
           }
         />
+
+        <div className="flex flex-wrap items-center gap-3">
+          {myTeams.length > 1 && (
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-slate-500">Team / sự kiện:</label>
+              <select
+                value={teamId ?? ''}
+                onChange={e => switchTeam(Number(e.target.value))}
+                className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {myTeams.map(t => (
+                  <option key={t.teamId} value={t.teamId}>
+                    {t.eventName} — {t.teamName} ({t.memberRole === 'LEADER' ? 'Leader' : 'Member'})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowCreateForm(true)}
+            className="text-sm text-blue-700 font-medium hover:text-blue-800 flex items-center gap-1"
+          >
+            <UserPlus className="w-4 h-4" /> Tạo team cho sự kiện khác
+          </button>
+        </div>
 
         <div className="grid grid-cols-3 gap-5">
           <div className="col-span-2 space-y-5">
@@ -485,6 +528,49 @@ export function TeamDetail({ onNavigate }: { onNavigate: (s: string) => void }) 
             </div>
           </div>
         </div>
+
+        {showInvite && (
+          <Modal
+            title="Invite Member"
+            subtitle="Nhập email người bạn muốn mời vào team."
+            size="sm"
+            onClose={() => setShowInvite(false)}
+            footer={
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowInvite(false)}
+                  className="px-4 py-2 text-sm rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="button"
+                  disabled={inviting || !inviteEmail.trim()}
+                  onClick={handleInvite}
+                  className="px-4 py-2 text-sm rounded-lg bg-blue-800 text-white font-semibold hover:bg-blue-900 disabled:opacity-50"
+                >
+                  {inviting ? 'Đang gửi...' : 'Gửi lời mời'}
+                </button>
+              </>
+            }
+          >
+            <div className="space-y-3">
+              <input
+                type="email"
+                value={inviteEmail}
+                onChange={e => setInviteEmail(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && inviteEmail.trim() && !inviting) handleInvite(); }}
+                placeholder="email@example.com"
+                autoFocus
+                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="text-xs text-slate-500">
+                {Math.max(0, 5 - memberCount)} slot còn lại. Người được mời cần có tài khoản SEAL; chỉ mời được khi team đang REGISTERED và sự kiện còn hạn đăng ký.
+              </p>
+            </div>
+          </Modal>
+        )}
       </div>
     );
   }
@@ -492,7 +578,20 @@ export function TeamDetail({ onNavigate }: { onNavigate: (s: string) => void }) 
   // No team - show create form
   return (
     <div className="p-7 space-y-5">
-      <PageHeader title="My Team" subtitle="Bạn chưa có team. Tạo team mới hoặc chờ lời mời." />
+      <PageHeader
+        title="My Team"
+        subtitle="Tạo team cho một sự kiện. Mỗi sự kiện chỉ được 1 team; bạn có thể tham gia nhiều sự kiện."
+        actions={
+          team ? (
+            <button
+              onClick={() => setShowCreateForm(false)}
+              className="text-sm text-slate-600 hover:text-slate-800 border border-slate-300 px-3 py-1.5 rounded-lg"
+            >
+              ← Về team của tôi
+            </button>
+          ) : null
+        }
+      />
 
       <div className="max-w-xl">
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 space-y-4">
@@ -707,7 +806,6 @@ export function MyInvitationsPage() {
 
 export function SubmitProject() {
   const auth = useAuth();
-  const canEdit = auth.role === 'TEAM_LEADER';
 
   const [overview, setOverview] = useState<SubmissionMyOverview | null>(null);
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null);
@@ -731,6 +829,10 @@ export function SubmitProject() {
     () => overview?.teams.find(team => team.teamId === selectedTeamId) ?? overview?.teams[0] ?? null,
     [overview, selectedTeamId],
   );
+
+  // Leadership is per-team (team_members.member_role via overview.memberRole), NOT the global role —
+  // every participant's global role is TEAM_MEMBER, so gating on the global role blocked everyone.
+  const canEdit = selectedTeam?.memberRole === 'LEADER';
 
   const selectedRound = useMemo(
     () => selectedTeam?.rounds.find(round => round.roundId === selectedRoundId) ?? selectedTeam?.rounds[0] ?? null,

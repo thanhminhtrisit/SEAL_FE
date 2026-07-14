@@ -20,21 +20,10 @@ import {
   type CriteriaSet,
   type BudgetResponse,
 } from '../../api/events';
-
-const disciplines = [
-  { id: 1, name: 'Software Engineering', code: 'SE', status: 'ACTIVE', activeEvents: 1, totalTeams: 24, completedEvents: 8 },
-  { id: 2, name: 'Artificial Intelligence', code: 'AI', status: 'ACTIVE', activeEvents: 0, totalTeams: 0, completedEvents: 3 },
-  { id: 3, name: 'IoT & Embedded Systems', code: 'IoT', status: 'ACTIVE', activeEvents: 0, totalTeams: 0, completedEvents: 2 },
-  { id: 4, name: 'Cybersecurity', code: 'CS', status: 'INACTIVE', activeEvents: 0, totalTeams: 0, completedEvents: 1 },
-];
-
-const termQuotas = [
-  { id: 1, term: 'Summer', year: 2026, discipline: 'Software Engineering', maxEvents: 2, usedEvents: 1, status: 'ok' },
-  { id: 2, term: 'Summer', year: 2026, discipline: 'Artificial Intelligence', maxEvents: 1, usedEvents: 0, status: 'ok' },
-  { id: 3, term: 'Summer', year: 2026, discipline: 'IoT & Embedded Systems', maxEvents: 1, usedEvents: 1, status: 'warn' },
-  { id: 4, term: 'Fall', year: 2026, discipline: 'Software Engineering', maxEvents: 2, usedEvents: 0, status: 'ok' },
-  { id: 5, term: 'Fall', year: 2026, discipline: 'Artificial Intelligence', maxEvents: 2, usedEvents: 1, status: 'ok' },
-];
+import {
+  getDisciplines, getTermPlans, createDiscipline, updateDiscipline, createTermPlan, updateTermPlan,
+  type Discipline, type TermPlan,
+} from '../../api/governance';
 
 const registrationData = [
   { month: 'Jan', registered: 12, completed: 10 },
@@ -77,15 +66,34 @@ function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: st
 }
 
 export function SCDashboard() {
+  const [disciplines, setDisciplines] = useState<Discipline[]>([]);
+  const [termPlans, setTermPlans] = useState<TermPlan[]>([]);
+  const [events, setEvents] = useState<{ status: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    Promise.all([getDisciplines(), getTermPlans(), getEvents()])
+      .then(([d, t, e]) => { if (alive) { setDisciplines(d); setTermPlans(t); setEvents(e); } })
+      .catch(err => toast.error(err instanceof Error ? err.message : 'Không tải được dữ liệu dashboard'))
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, []);
+
+  const countByStatus = (s: string) => events.filter(e => e.status === s).length;
+  const usedTotal = termPlans.reduce((sum, t) => sum + (t.usedEvents ?? 0), 0);
+  const maxTotal = termPlans.reduce((sum, t) => sum + (t.maxEvents ?? 0), 0);
+  const v = (n: number | string) => (loading ? '…' : String(n));
+
   return (
     <div className="p-7 space-y-7">
       <PageHeader title="Program Dashboard" subtitle="FPT University HCMC — Software Engineering Department" />
       <div className="grid grid-cols-5 gap-5">
-        <KPICard title="Pending Approvals" value="3" subtitle="Requires review" icon={CheckSquare} accent="amber" />
-        <KPICard title="Approved This Term" value="1" subtitle="Summer 2026" icon={Calendar} accent="green" />
-        <KPICard title="Quota Usage" value="3/6" subtitle="Across all disciplines" icon={Target} accent="blue" />
-        <KPICard title="Total Budget Approved" value="45M VND" subtitle="Current term" icon={DollarSign} accent="cyan" />
-        <KPICard title="Completed Events" value="18" subtitle="All terms" icon={TrendingUp} accent="purple" />
+        <KPICard title="Pending Approvals" value={v(countByStatus('PENDING_APPROVAL'))} subtitle="Requires review" icon={CheckSquare} accent="amber" />
+        <KPICard title="Approved Events" value={v(countByStatus('APPROVED'))} subtitle="Ready to open" icon={Calendar} accent="green" />
+        <KPICard title="Quota Usage" value={loading ? '…' : `${usedTotal}/${maxTotal}`} subtitle="Across all term plans" icon={Target} accent="blue" />
+        <KPICard title="Active Disciplines" value={v(disciplines.length)} subtitle="Available for events" icon={BookOpen} accent="cyan" />
+        <KPICard title="Completed Events" value={v(countByStatus('COMPLETED'))} subtitle="All terms" icon={TrendingUp} accent="purple" />
       </div>
 
       <div className="grid grid-cols-3 gap-5">
@@ -93,20 +101,19 @@ export function SCDashboard() {
           <h3 className="font-semibold text-slate-900 mb-4" style={{ fontFamily: 'var(--font-display)' }}>Pending Event Approvals</h3>
           <div className="flex flex-col items-center justify-center py-8 text-slate-400 gap-2">
             <CheckSquare className="w-8 h-8 opacity-30" />
-            <p className="text-sm">Truy cập <strong className="text-slate-600">Event Approvals</strong> để xem danh sách chờ duyệt.</p>
+            <p className="text-sm">Truy cập <strong className="text-slate-600">Event Approvals</strong> để xem danh sách chờ duyệt ({v(countByStatus('PENDING_APPROVAL'))}).</p>
           </div>
         </div>
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-          <h3 className="font-semibold text-slate-900 mb-4" style={{ fontFamily: 'var(--font-display)' }}>Discipline Status</h3>
+          <h3 className="font-semibold text-slate-900 mb-4" style={{ fontFamily: 'var(--font-display)' }}>Disciplines</h3>
           <div className="space-y-3">
-            {disciplines.filter(d => d.status === 'ACTIVE').map(d => (
+            {disciplines.length === 0 ? (
+              <p className="text-sm text-slate-400">{loading ? 'Đang tải…' : 'Chưa có discipline nào.'}</p>
+            ) : disciplines.map(d => (
               <div key={d.id} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-mono bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-bold">{d.code}</span>
                   <span className="text-sm text-slate-900">{d.name}</span>
-                </div>
-                <div className="text-right">
-                  <p className="text-xs text-slate-500">{d.activeEvents} active · {d.completedEvents} completed</p>
                 </div>
               </div>
             ))}
@@ -627,62 +634,293 @@ export function SCAnalytics() {
 }
 
 export function Disciplines() {
+  const [items, setItems] = useState<Discipline[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+  const [editing, setEditing] = useState<Discipline | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({ code: '', name: '', description: '', active: true });
+
+  const load = () => {
+    setLoading(true);
+    getDisciplines(true)
+      .then(setItems)
+      .catch(err => toast.error(err instanceof Error ? err.message : 'Không tải được disciplines'))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); }, []);
+
+  const submitCreate = async () => {
+    if (!form.code.trim() || !form.name.trim()) { toast.error('Code và Name là bắt buộc'); return; }
+    setSaving(true);
+    try {
+      await createDiscipline({ code: form.code.trim(), name: form.name.trim(), description: form.description.trim() || undefined });
+      toast.success('Đã tạo discipline');
+      setShowCreate(false);
+      load();
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Tạo thất bại'); }
+    finally { setSaving(false); }
+  };
+
+  const submitEdit = async () => {
+    if (!editing) return;
+    if (!form.name.trim()) { toast.error('Name là bắt buộc'); return; }
+    setSaving(true);
+    try {
+      await updateDiscipline(editing.id, { name: form.name.trim(), description: form.description.trim(), active: form.active });
+      toast.success('Đã cập nhật');
+      setEditing(null);
+      load();
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Cập nhật thất bại'); }
+    finally { setSaving(false); }
+  };
+
+  const toggleActive = async (d: Discipline) => {
+    try { await updateDiscipline(d.id, { active: !d.active }); load(); }
+    catch (err) { toast.error(err instanceof Error ? err.message : 'Không đổi được trạng thái'); }
+  };
+
   return (
     <div className="p-7 space-y-5">
-      <PageHeader title="Discipline Management" subtitle="Academic disciplines available for hackathon events" />
-      <div className="grid grid-cols-2 gap-5">
-        {disciplines.map(d => (
-          <div key={d.id} className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-            <div className="flex items-start justify-between mb-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
-                  <span className="text-blue-800 font-bold text-sm font-mono">{d.code}</span>
+      <PageHeader
+        title="Discipline Management"
+        subtitle="Academic disciplines available for hackathon events"
+        actions={
+          <button onClick={() => { setForm({ code: '', name: '', description: '', active: true }); setShowCreate(true); }} className="bg-blue-800 hover:bg-blue-900 text-white text-sm font-semibold px-4 py-2 rounded-lg">
+            + New Discipline
+          </button>
+        }
+      />
+      {loading ? (
+        <div className="flex items-center gap-2 text-slate-400 text-sm"><RefreshCw className="w-4 h-4 animate-spin" /> Đang tải…</div>
+      ) : items.length === 0 ? (
+        <div className="text-sm text-slate-500">Chưa có discipline nào.</div>
+      ) : (
+        <div className="grid grid-cols-2 gap-5">
+          {items.map(d => (
+            <div key={d.id} className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
+                    <span className="text-blue-800 font-bold text-sm font-mono">{d.code}</span>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>{d.name}</p>
+                    <StatusBadge status={d.active ? 'ACTIVE' : 'INACTIVE'} />
+                  </div>
                 </div>
-                <div><p className="font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>{d.name}</p><StatusBadge status={d.status} /></div>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => { setForm({ code: d.code, name: d.name, description: d.description ?? '', active: d.active }); setEditing(d); }} className="text-xs text-blue-700 hover:text-blue-800 font-medium border border-blue-200 px-2.5 py-1 rounded-lg">Edit</button>
+                  <button onClick={() => toggleActive(d)} className="text-xs text-slate-600 hover:text-slate-800 border border-slate-200 px-2.5 py-1 rounded-lg">{d.active ? 'Deactivate' : 'Activate'}</button>
+                </div>
               </div>
-              <button className="text-xs text-blue-700 hover:text-blue-800 font-medium border border-blue-200 px-2.5 py-1 rounded-lg">Edit</button>
+              {d.description && <p className="text-sm text-slate-600 mt-3 pt-3 border-t border-slate-100">{d.description}</p>}
             </div>
-            <div className="grid grid-cols-3 gap-3 mt-4 pt-3 border-t border-slate-100">
-              <div className="text-center"><p className="text-lg font-bold text-slate-900">{d.activeEvents}</p><p className="text-xs text-slate-500">Active Events</p></div>
-              <div className="text-center"><p className="text-lg font-bold text-slate-900">{d.completedEvents}</p><p className="text-xs text-slate-500">Completed</p></div>
-              <div className="text-center"><p className="text-lg font-bold text-slate-900">{d.totalTeams}</p><p className="text-xs text-slate-500">Total Teams</p></div>
+          ))}
+        </div>
+      )}
+
+      {(showCreate || editing) && (
+        <Modal
+          title={editing ? 'Edit Discipline' : 'New Discipline'}
+          size="sm"
+          onClose={() => { setShowCreate(false); setEditing(null); }}
+          footer={
+            <>
+              <button onClick={() => { setShowCreate(false); setEditing(null); }} className="px-4 py-2 text-sm rounded-lg border border-slate-300 text-slate-600">Hủy</button>
+              <button disabled={saving} onClick={editing ? submitEdit : submitCreate} className="px-4 py-2 text-sm rounded-lg bg-blue-800 text-white font-semibold disabled:opacity-50">{saving ? 'Đang lưu…' : 'Lưu'}</button>
+            </>
+          }
+        >
+          <div className="space-y-3">
+            {!editing && (
+              <div>
+                <label className="text-xs text-slate-500">Code</label>
+                <input value={form.code} onChange={e => setForm(f => ({ ...f, code: e.target.value }))} placeholder="VD: SE" className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" />
+              </div>
+            )}
+            <div>
+              <label className="text-xs text-slate-500">Name</label>
+              <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Software Engineering" className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" />
             </div>
+            <div>
+              <label className="text-xs text-slate-500">Description</label>
+              <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={3} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" />
+            </div>
+            {editing && (
+              <div className="flex items-center justify-between border-t border-slate-100 pt-3">
+                <div>
+                  <p className="text-xs font-semibold text-slate-700">Trạng thái</p>
+                  <p className="text-[11px] text-slate-400">Inactive sẽ không dùng để tạo event mới.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setForm(f => ({ ...f, active: !f.active }))}
+                  className={`px-3 py-1.5 rounded-full text-xs font-semibold ${form.active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}
+                >
+                  {form.active ? '● ACTIVE — bấm để tắt' : '○ INACTIVE — bấm để bật'}
+                </button>
+              </div>
+            )}
           </div>
-        ))}
-      </div>
+        </Modal>
+      )}
     </div>
   );
 }
 
 export function TermQuotas() {
+  const [items, setItems] = useState<TermPlan[]>([]);
+  const [disciplines, setDisciplines] = useState<Discipline[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+  const [editing, setEditing] = useState<TermPlan | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState<{ term: 'SPRING' | 'SUMMER' | 'FALL'; year: number; disciplineId: number | ''; maxEvents: number }>(
+    { term: 'SPRING', year: new Date().getFullYear(), disciplineId: '', maxEvents: 1 });
+  const [editMax, setEditMax] = useState(1);
+
+  const load = () => {
+    setLoading(true);
+    Promise.all([getTermPlans(), getDisciplines(true)])
+      .then(([t, d]) => { setItems(t); setDisciplines(d); })
+      .catch(err => toast.error(err instanceof Error ? err.message : 'Không tải được term plans'))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); }, []);
+
+  const submitCreate = async () => {
+    if (form.disciplineId === '') { toast.error('Chọn discipline'); return; }
+    if (form.maxEvents < 1) { toast.error('Max events ≥ 1'); return; }
+    setSaving(true);
+    try {
+      await createTermPlan({ term: form.term, year: form.year, disciplineId: form.disciplineId as number, maxEvents: form.maxEvents });
+      toast.success('Đã tạo quota');
+      setShowCreate(false);
+      load();
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Tạo thất bại'); }
+    finally { setSaving(false); }
+  };
+
+  const submitEdit = async () => {
+    if (!editing) return;
+    if (editMax < 1) { toast.error('Max events ≥ 1'); return; }
+    setSaving(true);
+    try {
+      await updateTermPlan(editing.id, editMax);
+      toast.success('Đã cập nhật quota');
+      setEditing(null);
+      load();
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Cập nhật thất bại'); }
+    finally { setSaving(false); }
+  };
+
   return (
     <div className="p-7 space-y-5">
-      <PageHeader title="Term Quota Management" subtitle="Maximum events per discipline per academic term" />
+      <PageHeader
+        title="Term Quota Management"
+        subtitle="Maximum events per discipline per academic term"
+        actions={
+          <button onClick={() => { setForm({ term: 'SPRING', year: new Date().getFullYear(), disciplineId: '', maxEvents: 1 }); setShowCreate(true); }} className="bg-blue-800 hover:bg-blue-900 text-white text-sm font-semibold px-4 py-2 rounded-lg">
+            + New Quota
+          </button>
+        }
+      />
       <div className="bg-white rounded-xl shadow-sm border border-slate-200">
         <table className="w-full">
-          <thead><tr className="border-b border-slate-100">{['Term', 'Year', 'Discipline', 'Max Events', 'Used', 'Remaining', 'Status'].map(c => <th key={c} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>)}</tr></thead>
+          <thead><tr className="border-b border-slate-100">{['Term', 'Year', 'Discipline', 'Max Events', 'Used', 'Remaining', 'Status', ''].map((c, i) => <th key={i} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>)}</tr></thead>
           <tbody className="divide-y divide-slate-100">
-            {termQuotas.map(q => (
-              <tr key={q.id} className={`hover:bg-slate-50 transition-colors ${q.status === 'warn' ? 'bg-amber-50/50' : ''}`}>
-                <td className="px-4 py-3 text-sm font-medium text-slate-900">{q.term}</td>
-                <td className="px-4 py-3 text-sm font-mono text-slate-700">{q.year}</td>
-                <td className="px-4 py-3 text-sm text-slate-700">{q.discipline}</td>
-                <td className="px-4 py-3 text-sm font-mono text-slate-700">{q.maxEvents}</td>
-                <td className="px-4 py-3 text-sm font-mono text-slate-700">{q.usedEvents}</td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 h-2 bg-slate-100 rounded-full"><div className={`h-2 rounded-full ${q.usedEvents >= q.maxEvents ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${(q.usedEvents / q.maxEvents) * 100}%` }} /></div>
-                    <span className="text-sm font-mono text-slate-700">{q.maxEvents - q.usedEvents}</span>
-                  </div>
-                </td>
-                <td className="px-4 py-3">
-                  {q.status === 'warn' ? <span className="flex items-center gap-1 text-xs text-amber-700"><AlertTriangle className="w-3.5 h-3.5" /> Quota Full</span> : <span className="text-xs text-emerald-700 flex items-center gap-1">● Available</span>}
-                </td>
-              </tr>
-            ))}
+            {loading ? (
+              <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-400">Đang tải…</td></tr>
+            ) : items.length === 0 ? (
+              <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-500">Chưa có term plan nào.</td></tr>
+            ) : items.map(q => {
+              const full = q.remaining <= 0;
+              const pct = q.maxEvents > 0 ? Math.min(100, Math.round((q.usedEvents / q.maxEvents) * 100)) : 0;
+              return (
+                <tr key={q.id} className={`hover:bg-slate-50 transition-colors ${full ? 'bg-amber-50/50' : ''}`}>
+                  <td className="px-4 py-3 text-sm font-medium text-slate-900">{q.term}</td>
+                  <td className="px-4 py-3 text-sm font-mono text-slate-700">{q.year}</td>
+                  <td className="px-4 py-3 text-sm text-slate-700">{q.disciplineName}</td>
+                  <td className="px-4 py-3 text-sm font-mono text-slate-700">{q.maxEvents}</td>
+                  <td className="px-4 py-3 text-sm font-mono text-slate-700">{q.usedEvents}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 h-2 bg-slate-100 rounded-full"><div className={`h-2 rounded-full ${full ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${pct}%` }} /></div>
+                      <span className="text-sm font-mono text-slate-700">{q.remaining}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    {full ? <span className="flex items-center gap-1 text-xs text-amber-700"><AlertTriangle className="w-3.5 h-3.5" /> Quota Full</span> : <span className="text-xs text-emerald-700 flex items-center gap-1">● Available</span>}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <button onClick={() => { setEditing(q); setEditMax(q.maxEvents); }} className="text-xs text-blue-700 hover:text-blue-800 font-medium border border-blue-200 px-2.5 py-1 rounded-lg">Edit</button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
+
+      {showCreate && (
+        <Modal
+          title="New Quota"
+          size="sm"
+          onClose={() => setShowCreate(false)}
+          footer={
+            <>
+              <button onClick={() => setShowCreate(false)} className="px-4 py-2 text-sm rounded-lg border border-slate-300 text-slate-600">Hủy</button>
+              <button disabled={saving} onClick={submitCreate} className="px-4 py-2 text-sm rounded-lg bg-blue-800 text-white font-semibold disabled:opacity-50">{saving ? 'Đang lưu…' : 'Lưu'}</button>
+            </>
+          }
+        >
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs text-slate-500">Term</label>
+              <select value={form.term} onChange={e => setForm(f => ({ ...f, term: e.target.value as 'SPRING' | 'SUMMER' | 'FALL' }))} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+                <option value="SPRING">SPRING</option>
+                <option value="SUMMER">SUMMER</option>
+                <option value="FALL">FALL</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-slate-500">Year</label>
+              <input type="number" value={form.year} onChange={e => setForm(f => ({ ...f, year: Number(e.target.value) }))} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500">Discipline</label>
+              <select value={form.disciplineId} onChange={e => setForm(f => ({ ...f, disciplineId: e.target.value === '' ? '' : Number(e.target.value) }))} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+                <option value="">-- Chọn discipline --</option>
+                {disciplines.map(d => <option key={d.id} value={d.id}>{d.name} ({d.code}){d.active ? '' : ' — inactive'}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-slate-500">Max Events</label>
+              <input type="number" min={1} value={form.maxEvents} onChange={e => setForm(f => ({ ...f, maxEvents: Number(e.target.value) }))} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" />
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {editing && (
+        <Modal
+          title={`Edit Quota — ${editing.term} ${editing.year} / ${editing.disciplineName}`}
+          size="sm"
+          onClose={() => setEditing(null)}
+          footer={
+            <>
+              <button onClick={() => setEditing(null)} className="px-4 py-2 text-sm rounded-lg border border-slate-300 text-slate-600">Hủy</button>
+              <button disabled={saving} onClick={submitEdit} className="px-4 py-2 text-sm rounded-lg bg-blue-800 text-white font-semibold disabled:opacity-50">{saving ? 'Đang lưu…' : 'Lưu'}</button>
+            </>
+          }
+        >
+          <div className="space-y-2">
+            <label className="text-xs text-slate-500">Max Events (đang dùng: {editing.usedEvents})</label>
+            <input type="number" min={1} value={editMax} onChange={e => setEditMax(Number(e.target.value))} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" />
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

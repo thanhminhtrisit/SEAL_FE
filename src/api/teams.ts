@@ -151,6 +151,18 @@ export async function revokeInvitation(teamId: number, invitationId: number): Pr
   await apiClient.delete(`/api/teams/${teamId}/invitations/${invitationId}`);
 }
 
+// PUT /api/teams/{teamId}/category — set/change the team's category (BR-TEAM-04: within the
+// registration window; a change after registration needs coordinator approval).
+export async function changeTeamCategory(teamId: number, categoryId: number): Promise<TeamDetail> {
+  const res = await apiClient.put<ApiResponse<TeamDetail>>(
+    `/api/teams/${teamId}/category`,
+    { categoryId },
+  );
+  const data = res.data.data;
+  if (!data) throw new Error(res.data.message ?? 'Change category failed');
+  return data;
+}
+
 /** Leader hoặc chính member đó — chỉ khi team chưa APPROVED (BR-TEAM-08). */
 export async function removeMember(teamId: number, userId: number): Promise<TeamDetail> {
   const res = await apiClient.delete<ApiResponse<TeamDetail>>(

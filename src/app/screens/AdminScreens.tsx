@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { Users, Shield, Lock, Activity, AlertTriangle, Server, Database, Clock, CheckCircle2, Plus, Search, Download, Eye, Edit2, UserX, Key } from 'lucide-react';
+import { getAutoApprove, setAutoApprove } from '../../api/admin';
 import { KPICard } from '../components/shared/KPICard';
 import { StatusBadge } from '../components/shared/Badge';
 import { Modal } from '../components/shared/Modal';
@@ -283,9 +285,67 @@ export function AuditLog() {
 }
 
 export function SystemConfig() {
+  const [autoApprove, setAutoApproveState] = useState<boolean | null>(null);
+  const [savingAuto, setSavingAuto] = useState(false);
+
+  useEffect(() => {
+    getAutoApprove()
+      .then(setAutoApproveState)
+      .catch(err => toast.error(err instanceof Error ? err.message : 'Không tải được cấu hình'));
+  }, []);
+
+  const toggleAutoApprove = async () => {
+    if (autoApprove === null) return;
+    setSavingAuto(true);
+    try {
+      const next = await setAutoApprove(!autoApprove);
+      setAutoApproveState(next);
+      toast.success(next ? 'Đã BẬT duyệt tài khoản tự động' : 'Đã TẮT duyệt tài khoản tự động (quay lại duyệt tay)');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Không đổi được cấu hình');
+    } finally {
+      setSavingAuto(false);
+    }
+  };
+
   return (
     <div className="p-7 space-y-5">
       <PageHeader title="System Configuration" subtitle="Platform-wide settings and policies" />
+
+      {/* Real, wired setting — Account Approval (AUTO_APPROVE_ACCOUNTS) */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center">
+            <Shield className="w-4 h-4 text-blue-700" />
+          </div>
+          <h3 className="font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>Account Approval</h3>
+        </div>
+        <div className="flex items-center justify-between">
+          <div className="pr-4">
+            <p className="text-sm font-medium text-slate-800">Duyệt tài khoản tự động</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              BẬT: tài khoản đăng ký hợp lệ được kích hoạt ngay (không cần Coordinator duyệt tay). TẮT: giữ quy trình duyệt tay (FR-AUTH-03 / BR-USR-06).
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={toggleAutoApprove}
+            disabled={autoApprove === null || savingAuto}
+            className={`relative inline-flex h-7 w-12 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${autoApprove ? 'bg-emerald-500' : 'bg-slate-300'}`}
+          >
+            <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${autoApprove ? 'translate-x-6' : 'translate-x-1'}`} />
+          </button>
+        </div>
+        <p className="text-xs mt-3 font-medium">
+          Trạng thái hiện tại:{' '}
+          {autoApprove === null
+            ? <span className="text-slate-400">đang tải…</span>
+            : autoApprove
+              ? <span className="text-emerald-600">● BẬT (auto-approve)</span>
+              : <span className="text-slate-500">○ TẮT (duyệt tay)</span>}
+        </p>
+      </div>
+
       <div className="grid grid-cols-2 gap-5">
         {[
           {

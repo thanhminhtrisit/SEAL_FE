@@ -132,6 +132,34 @@ export async function getEvaluationAudit(evaluationId: number): Promise<Evaluati
   return unwrap<EvaluationAuditEntry[]>(res.data) ?? [];
 }
 
+export interface EvaluationHistoryItem {
+  actionType: string;
+  actionLabel?: string | null;
+  actorName?: string | null;
+  criterionName?: string | null;
+  oldScoreValue?: string | null;
+  newScoreValue?: string | null;
+  oldComment?: string | null;
+  newComment?: string | null;
+  oldStatus?: string | null;
+  newStatus?: string | null;
+  occurredAt?: string | null;
+  description?: string | null;
+}
+
+export interface EvaluationHistory {
+  evaluationStatus?: string | null;
+  items: EvaluationHistoryItem[];
+}
+
+// GET /api/evaluations/{id}/history — richer, human-readable change history for a judge's scorecard.
+// Not wrapped in ApiResponse (scoring controller returns the DTO directly) — unwrap handles both.
+export async function getEvaluationHistory(evaluationId: number): Promise<EvaluationHistory> {
+  const res = await apiClient.get(`/api/evaluations/${evaluationId}/history`);
+  const data = unwrap<EvaluationHistory>(res.data);
+  return data ?? { evaluationStatus: null, items: [] };
+}
+
 export async function saveDraftScores(
   evaluationId: number,
   req: SaveScoresRequest,

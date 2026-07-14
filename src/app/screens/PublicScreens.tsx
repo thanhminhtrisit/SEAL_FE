@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { StatusBadge } from '../components/shared/Badge';
 import { useAuth } from '../../auth/AuthContext';
 import { registerApi } from '../../api/auth';
+import { getLanding, type LandingData } from '../../api/public';
 
 interface PublicScreensProps {
   screen: string;
@@ -11,22 +12,35 @@ interface PublicScreensProps {
   onRoleLogin: (role: string) => void;
 }
 
-const openEvents = [
-  {
-    id: 1, name: 'SEAL Software Engineering Hackathon Summer 2026', type: 'SUMMER',
-    discipline: 'Software Engineering', status: 'OPEN',
-    registrationDeadline: '2026-06-30', eventDates: 'Jul 15 – Aug 10, 2026',
-    teams: 24, maxTeams: 40, categories: ['Web Application', 'Mobile Application', 'AI/Automation Tool'],
-  },
-  {
-    id: 2, name: 'FPT Innovation Challenge Fall 2026', type: 'FALL',
-    discipline: 'Artificial Intelligence', status: 'OPEN',
-    registrationDeadline: '2026-08-15', eventDates: 'Sep 5 – Oct 20, 2026',
-    teams: 11, maxTeams: 30, categories: ['NLP Application', 'Computer Vision', 'Generative AI'],
-  },
-];
+function fmtLandingDate(s: string | null): string {
+  if (!s) return '—';
+  const d = new Date(s);
+  return Number.isNaN(d.getTime())
+    ? '—'
+    : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
 
 export function LandingPage({ onNavigate }: { onNavigate: (screen: string) => void }) {
+  const [data, setData] = useState<LandingData | null>(null);
+  const [loadingLanding, setLoadingLanding] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    getLanding()
+      .then(d => { if (alive) setData(d); })
+      .catch(() => { if (alive) setData(null); })
+      .finally(() => { if (alive) setLoadingLanding(false); });
+    return () => { alive = false; };
+  }, []);
+
+  const events = data?.events ?? [];
+  const stats = [
+    { value: String(data?.stats.openEvents ?? 0), label: 'Open Events', icon: Calendar },
+    { value: String(data?.stats.registeredTeams ?? 0), label: 'Registered Teams', icon: Users },
+    { value: String(data?.stats.categories ?? 0), label: 'Categories', icon: Trophy },
+    { value: String(data?.stats.judges ?? 0), label: 'Judges', icon: GraduationCap },
+  ];
+
   return (
     <div className="min-h-screen" style={{ background: 'linear-gradient(135deg, #0f2351 0%, #1e3a8a 50%, #0891b2 100%)' }}>
       {/* Navbar */}
@@ -76,12 +90,7 @@ export function LandingPage({ onNavigate }: { onNavigate: (screen: string) => vo
       {/* Stats */}
       <div className="max-w-7xl mx-auto px-8 pb-16">
         <div className="grid grid-cols-4 gap-4">
-          {[
-            { value: '2', label: 'Open Events', icon: Calendar },
-            { value: '35+', label: 'Registered Teams', icon: Users },
-            { value: '3', label: 'Categories', icon: Trophy },
-            { value: '8', label: 'Judges', icon: GraduationCap },
-          ].map(stat => (
+          {stats.map(stat => (
             <div key={stat.label} className="bg-white/10 backdrop-blur rounded-xl p-5 border border-white/20 flex items-center gap-4">
               <div className="w-10 h-10 bg-white/15 rounded-lg flex items-center justify-center">
                 <stat.icon className="w-5 h-5 text-cyan-300" />
@@ -100,17 +109,27 @@ export function LandingPage({ onNavigate }: { onNavigate: (screen: string) => vo
         <div className="max-w-7xl mx-auto px-8">
           <div className="flex items-center justify-between mb-8">
             <h2 className="text-2xl font-bold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>Open for Registration</h2>
-            <span className="text-sm text-slate-500">{openEvents.length} events available</span>
+            <span className="text-sm text-slate-500">{loadingLanding ? 'Loading…' : `${events.length} events available`}</span>
           </div>
+          {loadingLanding ? (
+            <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400">Loading events…</div>
+          ) : events.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-500">
+              No events are open for registration right now.
+            </div>
+          ) : (
           <div className="grid grid-cols-2 gap-6">
-            {openEvents.map(event => (
+            {events.map(event => {
+              const cap = event.maxTeams ?? 0;
+              const pct = cap > 0 ? Math.min(100, Math.round((event.registeredTeams / cap) * 100)) : 0;
+              return (
               <div key={event.id} className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 hover:shadow-md transition-shadow">
                 <div className="flex items-start justify-between mb-3">
-                  <StatusBadge status={event.status} />
-                  <span className="text-xs text-slate-400 font-mono">{event.type}</span>
+                  <StatusBadge status="OPEN" />
+                  <span className="text-xs text-slate-400 font-mono">{event.eventType ?? ''}</span>
                 </div>
                 <h3 className="font-bold text-slate-900 text-lg mb-1 leading-snug" style={{ fontFamily: 'var(--font-display)' }}>{event.name}</h3>
-                <p className="text-sm text-slate-500 mb-4">{event.discipline}</p>
+                <p className="text-sm text-slate-500 mb-4">{event.disciplineName ?? ''}</p>
                 <div className="flex flex-wrap gap-1.5 mb-4">
                   {event.categories.map(cat => (
                     <span key={cat} className="text-xs bg-blue-50 text-blue-700 px-2.5 py-0.5 rounded-full font-medium">{cat}</span>
@@ -119,26 +138,28 @@ export function LandingPage({ onNavigate }: { onNavigate: (screen: string) => vo
                 <div className="grid grid-cols-2 gap-3 text-sm mb-5">
                   <div className="flex items-center gap-1.5 text-slate-600">
                     <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                    {event.eventDates}
+                    {fmtLandingDate(event.registrationStart)} – {fmtLandingDate(event.registrationEnd)}
                   </div>
                   <div className="flex items-center gap-1.5 text-slate-600">
                     <Clock className="w-3.5 h-3.5 text-slate-400" />
-                    Deadline: {event.registrationDeadline}
+                    Deadline: {fmtLandingDate(event.registrationEnd)}
                   </div>
                   <div className="flex items-center gap-1.5 text-slate-600">
                     <Users className="w-3.5 h-3.5 text-slate-400" />
-                    {event.teams}/{event.maxTeams} teams
+                    {event.registeredTeams}{cap > 0 ? `/${cap}` : ''} teams
                   </div>
                 </div>
                 <div className="w-full bg-slate-100 rounded-full h-1.5 mb-5">
-                  <div className="bg-blue-600 h-1.5 rounded-full" style={{ width: `${(event.teams / event.maxTeams) * 100}%` }} />
+                  <div className="bg-blue-600 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
                 </div>
                 <button onClick={() => onNavigate('register')} className="w-full bg-blue-800 hover:bg-blue-900 text-white font-semibold py-2.5 rounded-xl flex items-center justify-center gap-2 transition-colors text-sm">
                   Register Team <ChevronRight className="w-4 h-4" />
                 </button>
               </div>
-            ))}
+              );
+            })}
           </div>
+          )}
         </div>
       </div>
 

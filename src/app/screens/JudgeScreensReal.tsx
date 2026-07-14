@@ -16,10 +16,12 @@ import {
   getAssignedSubmissions,
   getEvaluation,
   getEvaluationAudit,
+  getEvaluationHistory,
   saveDraftScores,
   startEvaluation,
   submitEvaluation,
   type EvaluationAuditEntry,
+  type EvaluationHistoryItem,
   type EvaluationDetail,
   type EvaluationScore,
   type JudgeAssignedSubmission,
@@ -398,6 +400,8 @@ export function JudgeScoringPage() {
   const [selectedSubmissionId, setSelectedSubmissionId] = useState<number | null>(() => readPersistedSelection());
   const [evaluation, setEvaluation] = useState<EvaluationDetail | null>(null);
   const [audit, setAudit] = useState<EvaluationAuditEntry[]>([]);
+  const [history, setHistory] = useState<EvaluationHistoryItem[] | null>(null);
+  const [loadingHistory, setLoadingHistory] = useState(false);
   const [loadingAssignments, setLoadingAssignments] = useState(true);
   const [loadingEvaluation, setLoadingEvaluation] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -509,6 +513,11 @@ export function JudgeScoringPage() {
       setStatusMessage('This submission has not been started yet. Open the scorecard to begin.');
     }
   }, [openScorecard, selectedSubmission?.evaluationId, selectedSubmissionId]);
+
+  // Change-history is loaded on demand; reset it whenever the open scorecard changes.
+  useEffect(() => {
+    setHistory(null);
+  }, [evaluation?.id]);
 
   const totalRawScore = useMemo(() => {
     return currentCriteria.reduce((sum, criterion) => {
@@ -901,6 +910,59 @@ new: ${entry.newValue ?? 'null'}`}
               )
             ) : (
               <p className="text-xs text-slate-500">Open a scorecard to see audit history.</p>
+            )}
+          </div>
+
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-sm font-semibold text-slate-900">Change history</h4>
+              <button
+                type="button"
+                disabled={!evaluation || loadingHistory}
+                onClick={async () => {
+                  if (!evaluation) return;
+                  setLoadingHistory(true);
+                  try {
+                    const h = await getEvaluationHistory(evaluation.id);
+                    setHistory(h.items);
+                  } catch {
+                    setHistory([]);
+                  } finally {
+                    setLoadingHistory(false);
+                  }
+                }}
+                className="text-[11px] text-blue-700 disabled:text-slate-300"
+              >
+                {loadingHistory ? 'Loading...' : 'Load history'}
+              </button>
+            </div>
+            {history === null ? (
+              <p className="text-xs text-slate-500">Click "Load history" to view this scorecard's change history.</p>
+            ) : history.length === 0 ? (
+              <p className="text-xs text-slate-500">No history entries.</p>
+            ) : (
+              <div className="space-y-3">
+                {history.map((h, i) => (
+                  <div key={i} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-semibold text-slate-800">{h.actionLabel ?? h.actionType}</p>
+                      <span className="text-[10px] text-slate-400">{fmtDate(h.occurredAt)}</span>
+                    </div>
+                    {h.criterionName ? (
+                      <p className="text-[11px] text-slate-500 mt-0.5">{h.criterionName}</p>
+                    ) : null}
+                    {h.oldScoreValue != null || h.newScoreValue != null ? (
+                      <p className="text-[11px] text-slate-600 mt-1">
+                        {h.oldScoreValue ?? '—'} → {h.newScoreValue ?? '—'}
+                      </p>
+                    ) : null}
+                    {h.description ? (
+                      <p className="text-[11px] text-slate-500 mt-1">{h.description}</p>
+                    ) : null}
+                    <p className="text-[10px] text-slate-400 mt-1">{h.actorName ?? 'System'}</p>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
 

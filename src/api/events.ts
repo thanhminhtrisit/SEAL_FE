@@ -301,6 +301,20 @@ export async function deleteCriteriaSet(eventId: number, csId: number): Promise<
   await apiClient.delete(`/api/events/${eventId}/criteria-sets/${csId}`);
 }
 
+// DELETE a single criterion from a set (DRAFT/REJECTED events only). Returns the updated set.
+export async function deleteCriterion(
+  eventId: number,
+  csId: number,
+  criterionId: number,
+): Promise<CriteriaSet> {
+  const res = await apiClient.delete<ApiResponse<CriteriaSet>>(
+    `/api/events/${eventId}/criteria-sets/${csId}/criteria/${criterionId}`,
+  );
+  const data = res.data.data;
+  if (!data) throw new Error(res.data.message ?? 'Delete criterion failed');
+  return data;
+}
+
 // Round PATCH (does not change orderNumber)
 export interface UpdateRoundRequest {
   name?: string;
