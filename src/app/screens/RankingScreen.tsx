@@ -270,7 +270,7 @@ const handleConfirmDisqualify = async () => {
                 isPublished ? (
                   <span className="px-2.5 py-1 inline-flex text-xs font-semibold rounded-full bg-blue-50 text-blue-700 border border-blue-200">🌍 Đã công bố cho thí sinh</span>
                 ) : (
-                  <span className="px-2.5 py-1 inline-flex text-xs font-semibold rounded-full bg-slate-100 text-slate-600 border border-slate-200">🔒 Nội bộ (Chưa công bố)</span>
+                  <span className="px-2.5 py-1 inline-flex text-xs font-semibold rounded-full bg-slate-100 text-slate-600 border border-slate-200">🔒 Nội bộ</span>
                 )
               )}
             </div>

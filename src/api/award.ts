@@ -57,6 +57,11 @@ export const award = {
     return response.data?.data || response.data;
   },
 
+  deleteAward: async (awardId: number) => {
+    const response = await apiClient.delete(`api//awards/${awardId}`);
+    return response.data;
+  },
+
 
   
 };

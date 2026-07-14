@@ -8,6 +8,7 @@ export interface ScoreBreakdownResponse {
   criterionWeight: number;
   scoreValue: number;
   judgeComment?: string | null;
+  generalComment: string | null;
 }
 
 export const ranking = {

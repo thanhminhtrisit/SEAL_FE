@@ -32,8 +32,10 @@ export interface AwardCreateRequest {
 export interface AwardResponse {
   awardId: number;
   eventId: number;
+  eventName: string;
   teamId: number;
   teamName: string;
+  categoryName: string;
   awardType: string;
   description: string;
   awardedBy: number;

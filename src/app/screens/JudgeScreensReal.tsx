@@ -12,17 +12,16 @@ import {
 import { toast } from 'sonner';
 import { KPICard } from '../components/shared/KPICard';
 import { StatusBadge } from '../components/shared/Badge';
+import { Modal } from '../components/shared/Modal';
 import {
   getAssignedSubmissions,
   getEvaluation,
-  getEvaluationAudit,
   getEvaluationHistory,
   saveDraftScores,
   startEvaluation,
   submitEvaluation,
-  type EvaluationAuditEntry,
-  type EvaluationHistoryItem,
   type EvaluationDetail,
+  type EvaluationHistoryItem,
   type EvaluationScore,
   type JudgeAssignedSubmission,
 } from '../../api/evaluations';
@@ -73,6 +72,17 @@ function fmtNumber(value?: number | string | null, digits = 2) {
   return num.toFixed(digits);
 }
 
+function statusLabel(status?: string | null) {
+  return (status ?? 'NOT_STARTED').replace(/_/g, ' ');
+}
+
+function assignmentActionLabel(item: JudgeAssignedSubmission) {
+  if (item.evaluationStatus === 'LOCKED') return 'View Locked Evaluation';
+  if (item.evaluationStatus === 'SUBMITTED') return 'Edit Submitted Evaluation';
+  if (item.evaluationStatus === 'DRAFT') return 'Continue Evaluation';
+  return 'Start Evaluation';
+}
+
 function buildScoreMap(scores: EvaluationScore[]) {
   return scores.reduce<Record<number, { scoreValue: string; comment: string }>>((acc, score) => {
     acc[score.criterionId] = {
@@ -91,11 +101,211 @@ function normalizeScoreValue(raw?: string | null) {
   return parsed;
 }
 
-function submissionKey(submissionId: number) {
-  return `#${submissionId}`;
+type ScoreDraftState = Record<number, { scoreValue: string; comment: string }>;
+
+type AssignmentSortOption =
+  | 'status'
+  | 'submitted_desc'
+  | 'submitted_asc'
+  | 'team_asc'
+  | 'team_desc'
+  | 'event_asc'
+  | 'event_desc'
+  | 'round_asc'
+  | 'round_desc'
+  | 'attempt_desc'
+  | 'attempt_asc';
+
+type AssignmentFilters = {
+  query: string;
+  eventName: string;
+  roundName: string;
+  categoryName: string;
+  status: string;
+  dateFrom: string;
+  dateTo: string;
+  sort: AssignmentSortOption;
+};
+
+const defaultAssignmentFilters: AssignmentFilters = {
+  query: '',
+  eventName: 'ALL',
+  roundName: 'ALL',
+  categoryName: 'ALL',
+  status: 'ALL',
+  dateFrom: '',
+  dateTo: '',
+  sort: 'status',
+};
+
+const evaluationStatusPriority: Record<string, number> = {
+  DRAFT: 0,
+  NOT_STARTED: 1,
+  SUBMITTED: 2,
+  LOCKED: 3,
+};
+
+function uniqueSorted(values: Array<string | null | undefined>) {
+  return Array.from(new Set(values.filter(Boolean).map(String))).sort((a, b) => a.localeCompare(b));
 }
 
-type ScoreDraftState = Record<number, { scoreValue: string; comment: string }>;
+function toDateMs(value?: string | null) {
+  if (!value) return 0;
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function filterAndSortAssignments(items: JudgeAssignedSubmission[], filters: AssignmentFilters) {
+  const query = filters.query.trim().toLowerCase();
+  const from = filters.dateFrom ? new Date(`${filters.dateFrom}T00:00:00`).getTime() : null;
+  const to = filters.dateTo ? new Date(`${filters.dateTo}T23:59:59`).getTime() : null;
+
+  return items
+    .filter(item => {
+      const status = item.evaluationStatus ?? 'NOT_STARTED';
+      const submittedAt = toDateMs(item.submittedAt);
+      const matchesQuery = !query || [item.teamName, item.eventName, item.roundName, item.categoryName, status]
+        .filter(Boolean)
+        .some(text => String(text).toLowerCase().includes(query));
+      return matchesQuery
+        && (filters.eventName === 'ALL' || item.eventName === filters.eventName)
+        && (filters.roundName === 'ALL' || item.roundName === filters.roundName)
+        && (filters.categoryName === 'ALL' || item.categoryName === filters.categoryName)
+        && (filters.status === 'ALL' || status === filters.status)
+        && (from == null || submittedAt >= from)
+        && (to == null || submittedAt <= to);
+    })
+    .sort((a, b) => {
+      switch (filters.sort) {
+        case 'submitted_desc':
+          return toDateMs(b.submittedAt) - toDateMs(a.submittedAt);
+        case 'submitted_asc':
+          return toDateMs(a.submittedAt) - toDateMs(b.submittedAt);
+        case 'team_asc':
+          return a.teamName.localeCompare(b.teamName);
+        case 'team_desc':
+          return b.teamName.localeCompare(a.teamName);
+        case 'event_asc':
+          return a.eventName.localeCompare(b.eventName);
+        case 'event_desc':
+          return b.eventName.localeCompare(a.eventName);
+        case 'round_asc':
+          return a.roundName.localeCompare(b.roundName);
+        case 'round_desc':
+          return b.roundName.localeCompare(a.roundName);
+        case 'attempt_desc':
+          return (b.attemptNumber ?? 0) - (a.attemptNumber ?? 0);
+        case 'attempt_asc':
+          return (a.attemptNumber ?? 0) - (b.attemptNumber ?? 0);
+        case 'status':
+        default:
+          return (evaluationStatusPriority[a.evaluationStatus ?? 'NOT_STARTED'] ?? 99)
+            - (evaluationStatusPriority[b.evaluationStatus ?? 'NOT_STARTED'] ?? 99)
+            || toDateMs(b.submittedAt) - toDateMs(a.submittedAt);
+      }
+    });
+}
+
+function AssignmentFilterBar({
+  items,
+  filters,
+  onChange,
+}: {
+  items: JudgeAssignedSubmission[];
+  filters: AssignmentFilters;
+  onChange: (patch: Partial<AssignmentFilters>) => void;
+}) {
+  const eventOptions = uniqueSorted(items.map(item => item.eventName));
+  const roundOptions = uniqueSorted(items.map(item => item.roundName));
+  const categoryOptions = uniqueSorted(items.map(item => item.categoryName));
+
+  return (
+    <div className="grid grid-cols-4 gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+      <input
+        value={filters.query}
+        onChange={e => onChange({ query: e.target.value })}
+        placeholder="Search team, event, round..."
+        className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"
+      />
+      <select value={filters.eventName} onChange={e => onChange({ eventName: e.target.value })} className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white">
+        <option value="ALL">All events</option>
+        {eventOptions.map(option => <option key={option} value={option}>{option}</option>)}
+      </select>
+      <select value={filters.roundName} onChange={e => onChange({ roundName: e.target.value })} className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white">
+        <option value="ALL">All rounds</option>
+        {roundOptions.map(option => <option key={option} value={option}>{option}</option>)}
+      </select>
+      <select value={filters.categoryName} onChange={e => onChange({ categoryName: e.target.value })} className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white">
+        <option value="ALL">All categories</option>
+        {categoryOptions.map(option => <option key={option} value={option}>{option}</option>)}
+      </select>
+      <select value={filters.status} onChange={e => onChange({ status: e.target.value })} className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white">
+        <option value="ALL">All statuses</option>
+        <option value="NOT_STARTED">Not started</option>
+        <option value="DRAFT">Draft</option>
+        <option value="SUBMITTED">Submitted</option>
+        <option value="LOCKED">Locked</option>
+      </select>
+      <input type="date" value={filters.dateFrom} onChange={e => onChange({ dateFrom: e.target.value })} className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white" />
+      <input type="date" value={filters.dateTo} onChange={e => onChange({ dateTo: e.target.value })} className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white" />
+      <select value={filters.sort} onChange={e => onChange({ sort: e.target.value as AssignmentSortOption })} className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white">
+        <option value="status">Status priority, newest</option>
+        <option value="submitted_desc">Submitted newest</option>
+        <option value="submitted_asc">Submitted oldest</option>
+        <option value="team_asc">Team A-Z</option>
+        <option value="team_desc">Team Z-A</option>
+        <option value="event_asc">Event A-Z</option>
+        <option value="event_desc">Event Z-A</option>
+        <option value="round_asc">Round A-Z</option>
+        <option value="round_desc">Round Z-A</option>
+        <option value="attempt_desc">Attempt highest</option>
+        <option value="attempt_asc">Attempt lowest</option>
+      </select>
+    </div>
+  );
+}
+
+type AuditFilterState = {
+  action: 'ALL' | 'SCORE' | 'EVALUATION' | 'COMMENT';
+  dateFrom: string;
+  dateTo: string;
+  sort: 'newest' | 'oldest';
+};
+
+const defaultAuditFilters: AuditFilterState = {
+  action: 'ALL',
+  dateFrom: '',
+  dateTo: '',
+  sort: 'newest',
+};
+
+function auditMatchesAction(entry: EvaluationHistoryItem, action: AuditFilterState['action']) {
+  if (action === 'ALL') return true;
+  if (action === 'SCORE') return entry.actionType.startsWith('SCORE_');
+  if (action === 'EVALUATION') return entry.actionType === 'EVALUATION_SUBMITTED' || entry.actionType === 'EVALUATION_STARTED' || entry.actionType === 'EVALUATION_LOCKED';
+  if (action === 'COMMENT') {
+    return entry.actionType === 'EVALUATION_UPDATED'
+      || entry.oldComment != null
+      || entry.newComment != null;
+  }
+  return true;
+}
+
+function filterAndSortAudit(entries: EvaluationHistoryItem[], filters: AuditFilterState) {
+  const from = filters.dateFrom ? new Date(`${filters.dateFrom}T00:00:00`).getTime() : null;
+  const to = filters.dateTo ? new Date(`${filters.dateTo}T23:59:59`).getTime() : null;
+
+  return entries
+    .filter(entry => {
+      const createdAt = toDateMs(entry.occurredAt);
+      return auditMatchesAction(entry, filters.action)
+        && (from == null || createdAt >= from)
+        && (to == null || createdAt <= to);
+    })
+    .sort((a, b) => filters.sort === 'newest'
+      ? toDateMs(b.createdAt) - toDateMs(a.createdAt)
+      : toDateMs(a.createdAt) - toDateMs(b.createdAt));
+}
 
 function AssignedSubmissionCard({
   item,
@@ -109,7 +319,9 @@ function AssignedSubmissionCard({
   onOpen: () => void;
 }) {
   const statusTone =
-    item.evaluationStatus === 'SUBMITTED'
+    item.evaluationStatus === 'LOCKED'
+      ? 'locked'
+      : item.evaluationStatus === 'SUBMITTED'
       ? 'success'
       : item.evaluationStatus === 'DRAFT'
         ? 'info'
@@ -125,7 +337,6 @@ function AssignedSubmissionCard({
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h4 className="font-semibold text-slate-900">{item.teamName}</h4>
-            <span className="text-[11px] text-slate-500">{submissionKey(item.submissionId)}</span>
           </div>
           <p className="text-sm text-slate-500 mt-0.5">
             {item.eventName} · {item.roundName} · {item.categoryName}
@@ -136,7 +347,7 @@ function AssignedSubmissionCard({
         </div>
 
         <div className="flex flex-col items-end gap-2 flex-shrink-0">
-          <StatusBadge status={safeEvaluationStatus === 'NOT_STARTED' ? 'DRAFT' : safeEvaluationStatus} label={safeEvaluationStatus.replace(/_/g, ' ')} />
+          <StatusBadge status={safeEvaluationStatus === 'NOT_STARTED' ? 'DRAFT' : safeEvaluationStatus} label={statusLabel(safeEvaluationStatus)} />
           <span className="text-[11px] text-slate-500">
             {item.scoredCriteriaCount ?? 0}/{item.totalCriteriaCount ?? 0} scored
           </span>
@@ -148,13 +359,14 @@ function AssignedSubmissionCard({
           <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
             statusTone === 'success'
               ? 'bg-emerald-50 text-emerald-700'
-              : statusTone === 'info'
+              : statusTone === 'locked'
+                ? 'bg-slate-100 text-slate-600'
+                : statusTone === 'info'
                 ? 'bg-cyan-50 text-cyan-700'
                 : 'bg-amber-50 text-amber-700'
           }`}>
             {item.evaluationStatus}
           </span>
-          {item.evaluationId ? <span className="text-[11px] text-slate-400">Evaluation #{item.evaluationId}</span> : null}
         </div>
         <span
           onClick={(e) => {
@@ -163,7 +375,7 @@ function AssignedSubmissionCard({
           }}
           className="text-xs bg-blue-800 hover:bg-blue-900 text-white px-3 py-1.5 rounded-lg font-medium transition-colors"
         >
-          {item.evaluationId ? 'Open scorecard' : 'Start scoring'}
+          {assignmentActionLabel(item)}
         </span>
       </div>
     </button>
@@ -189,13 +401,14 @@ async function loadEvaluationForSubmission(submission: JudgeAssignedSubmission) 
 export function JudgeDashboard({ onNavigate }: { onNavigate: (s: string) => void }) {
   const [assigned, setAssigned] = useState<JudgeAssignedSubmission[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filters, setFilters] = useState<AssignmentFilters>(defaultAssignmentFilters);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       setAssigned(await getAssignedSubmissions());
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Không tải được danh sách submissions');
+      toast.error(err instanceof Error ? err.message : 'Could not load assigned submissions');
       setAssigned([]);
     } finally {
       setLoading(false);
@@ -207,9 +420,11 @@ export function JudgeDashboard({ onNavigate }: { onNavigate: (s: string) => void
   }, [load]);
 
   const scoredCount = assigned.filter(item => item.evaluationStatus === 'SUBMITTED').length;
+  const lockedCount = assigned.filter(item => item.evaluationStatus === 'LOCKED').length;
   const inProgressCount = assigned.filter(item => item.evaluationStatus === 'DRAFT').length;
   const pendingCount = assigned.filter(item => item.evaluationStatus === 'NOT_STARTED').length;
-  const completion = assigned.length ? Math.round((scoredCount / assigned.length) * 100) : 0;
+  const completion = assigned.length ? Math.round(((scoredCount + lockedCount) / assigned.length) * 100) : 0;
+  const visibleAssigned = useMemo(() => filterAndSortAssignments(assigned, filters), [assigned, filters]);
 
   return (
     <div className="p-7 space-y-7">
@@ -217,7 +432,7 @@ export function JudgeDashboard({ onNavigate }: { onNavigate: (s: string) => void
 
       <div className="grid grid-cols-4 gap-5">
         <KPICard title="Assigned" value={assigned.length} icon={Star} accent="blue" />
-        <KPICard title="Submitted" value={scoredCount} subtitle="Locked scorecards" icon={CheckCircle2} accent="green" />
+        <KPICard title="Submitted" value={scoredCount} subtitle="Editable until locked" icon={CheckCircle2} accent="green" />
         <KPICard title="Drafts" value={inProgressCount} subtitle="In progress" icon={FileText} accent="cyan" />
         <KPICard title="Pending" value={pendingCount} subtitle="Not started yet" icon={AlertTriangle} accent="amber" />
       </div>
@@ -234,15 +449,27 @@ export function JudgeDashboard({ onNavigate }: { onNavigate: (s: string) => void
             </button>
           </div>
 
+          <div className="mb-4">
+            <AssignmentFilterBar
+              items={assigned}
+              filters={filters}
+              onChange={patch => setFilters(prev => ({ ...prev, ...patch }))}
+            />
+          </div>
+
           {loading ? (
             <p className="text-sm text-slate-500">Loading assignments...</p>
           ) : assigned.length === 0 ? (
             <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-              No active assignments found for your account.
+              No submissions are currently assigned to you for scoring.
+            </div>
+          ) : visibleAssigned.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+              No submissions match the current filters.
             </div>
           ) : (
             <div className="space-y-3">
-              {assigned.map(item => (
+              {visibleAssigned.map(item => (
                 <AssignedSubmissionCard
                   key={item.submissionId}
                   item={item}
@@ -282,10 +509,10 @@ export function JudgeDashboard({ onNavigate }: { onNavigate: (s: string) => void
             </div>
           </div>
           <div className="space-y-1.5">
-            {assigned.slice(0, 5).map(item => (
+            {visibleAssigned.slice(0, 5).map(item => (
               <div key={item.submissionId} className="flex items-center gap-2 text-xs">
-                {item.evaluationStatus === 'SUBMITTED' ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> : <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />}
-                <span className={item.evaluationStatus === 'SUBMITTED' ? 'text-slate-500 line-through' : 'text-slate-700'}>{item.teamName}</span>
+                {item.evaluationStatus === 'SUBMITTED' || item.evaluationStatus === 'LOCKED' ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> : <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />}
+                <span className={item.evaluationStatus === 'LOCKED' ? 'text-slate-500 line-through' : 'text-slate-700'}>{item.teamName}</span>
               </div>
             ))}
           </div>
@@ -298,14 +525,14 @@ export function JudgeDashboard({ onNavigate }: { onNavigate: (s: string) => void
 export function JudgeSubmissions({ onNavigate }: { onNavigate: (s: string) => void }) {
   const [assigned, setAssigned] = useState<JudgeAssignedSubmission[]>([]);
   const [loading, setLoading] = useState(true);
-  const [query, setQuery] = useState('');
+  const [filters, setFilters] = useState<AssignmentFilters>(defaultAssignmentFilters);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       setAssigned(await getAssignedSubmissions());
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Không tải được danh sách submissions');
+      toast.error(err instanceof Error ? err.message : 'Could not load assigned submissions');
       setAssigned([]);
     } finally {
       setLoading(false);
@@ -316,29 +543,18 @@ export function JudgeSubmissions({ onNavigate }: { onNavigate: (s: string) => vo
     void load();
   }, [load]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return assigned;
-    return assigned.filter(item =>
-      [item.teamName, item.categoryName, item.roundName, item.eventName, item.evaluationStatus]
-        .filter(Boolean)
-        .some(text => String(text).toLowerCase().includes(q)),
-    );
-  }, [assigned, query]);
+  const filtered = useMemo(() => filterAndSortAssignments(assigned, filters), [assigned, filters]);
 
   return (
     <div className="p-7 space-y-5">
       <PageHeader title="Assigned Submissions" subtitle="Backend-powered assignment list" />
 
-      <div className="flex items-center justify-between gap-3">
-        <div className="relative w-full max-w-sm">
-          <input
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder="Search team, category, round..."
-            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"
-          />
-        </div>
+      <div className="space-y-3">
+        <AssignmentFilterBar
+          items={assigned}
+          filters={filters}
+          onChange={patch => setFilters(prev => ({ ...prev, ...patch }))}
+        />
         <button onClick={load} disabled={loading} className="flex items-center gap-1.5 border border-slate-200 text-slate-600 text-sm px-3 py-2 rounded-lg hover:bg-slate-50 disabled:opacity-50">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
         </button>
@@ -372,7 +588,7 @@ export function JudgeSubmissions({ onNavigate }: { onNavigate: (s: string) => vo
                     Attempt #{item.attemptNumber} · {fmtDate(item.submittedAt)}
                   </td>
                   <td className="px-4 py-3">
-                    <StatusBadge status={(item.evaluationStatus ?? 'NOT_STARTED') === 'NOT_STARTED' ? 'DRAFT' : item.evaluationStatus ?? 'NOT_STARTED'} label={(item.evaluationStatus ?? 'NOT_STARTED').replace(/_/g, ' ')} />
+                    <StatusBadge status={(item.evaluationStatus ?? 'NOT_STARTED') === 'NOT_STARTED' ? 'DRAFT' : item.evaluationStatus ?? 'NOT_STARTED'} label={statusLabel(item.evaluationStatus)} />
                   </td>
                   <td className="px-4 py-3">
                     <button
@@ -380,9 +596,9 @@ export function JudgeSubmissions({ onNavigate }: { onNavigate: (s: string) => vo
                         persistSelection(item.submissionId);
                         onNavigate('judge-scoring');
                       }}
-                      className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${item.evaluationStatus === 'SUBMITTED' ? 'bg-slate-50 text-slate-600 hover:bg-slate-100' : 'bg-blue-800 text-white hover:bg-blue-900'}`}
+                      className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${item.evaluationStatus === 'LOCKED' ? 'bg-slate-50 text-slate-600 hover:bg-slate-100' : 'bg-blue-800 text-white hover:bg-blue-900'}`}
                     >
-                      {item.evaluationStatus === 'SUBMITTED' ? 'Review' : item.evaluationId ? 'Edit score' : 'Start score'}
+                      {assignmentActionLabel(item)}
                     </button>
                   </td>
                 </tr>
@@ -399,16 +615,17 @@ export function JudgeScoringPage() {
   const [assigned, setAssigned] = useState<JudgeAssignedSubmission[]>([]);
   const [selectedSubmissionId, setSelectedSubmissionId] = useState<number | null>(() => readPersistedSelection());
   const [evaluation, setEvaluation] = useState<EvaluationDetail | null>(null);
-  const [audit, setAudit] = useState<EvaluationAuditEntry[]>([]);
-  const [history, setHistory] = useState<EvaluationHistoryItem[] | null>(null);
-  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [history, setHistory] = useState<EvaluationHistoryItem[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(true);
   const [loadingEvaluation, setLoadingEvaluation] = useState(false);
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [statusMessage, setStatusMessage] = useState('Select an assigned submission to start scoring');
+  const [confirmSubmitOpen, setConfirmSubmitOpen] = useState(false);
+  const [statusMessage, setStatusMessage] = useState('Select an assigned submission to start evaluating');
   const [draftComment, setDraftComment] = useState('');
   const [draftScores, setDraftScores] = useState<ScoreDraftState>({});
+  const [assignmentFilters, setAssignmentFilters] = useState<AssignmentFilters>(defaultAssignmentFilters);
+  const [auditFilters, setAuditFilters] = useState<AuditFilterState>(defaultAuditFilters);
 
   const loadAssignments = useCallback(async () => {
     setLoadingAssignments(true);
@@ -428,7 +645,7 @@ export function JudgeScoringPage() {
       });
     } catch (err) {
       setAssigned([]);
-      toast.error(err instanceof Error ? err.message : 'Không tải được danh sách assignments');
+      toast.error(err instanceof Error ? err.message : 'Could not load assignments');
     } finally {
       setLoadingAssignments(false);
     }
@@ -441,6 +658,14 @@ export function JudgeScoringPage() {
   const selectedSubmission = useMemo(
     () => assigned.find(item => item.submissionId === selectedSubmissionId) ?? null,
     [assigned, selectedSubmissionId],
+  );
+  const visibleAssigned = useMemo(
+    () => filterAndSortAssignments(assigned, assignmentFilters),
+    [assigned, assignmentFilters],
+  );
+  const visibleHistory = useMemo(
+    () => filterAndSortAudit(history, auditFilters),
+    [history, auditFilters],
   );
 
   const currentCriteria = useMemo(
@@ -469,7 +694,8 @@ export function JudgeScoringPage() {
     try {
       const detail = await loadEvaluationForSubmission(submission);
       setEvaluation(detail);
-      setAudit(await getEvaluationAudit(detail.id));
+      const historyResponse = await getEvaluationHistory(detail.id);
+      setHistory(historyResponse.items ?? []);
       persistSelection(submission.submissionId);
       setAssigned(prev =>
         prev.map(item =>
@@ -487,11 +713,11 @@ export function JudgeScoringPage() {
         isLocked
           ? 'Locked scorecard loaded'
           : detail.status === 'SUBMITTED'
-            ? 'Submitted scorecard loaded. You can still edit until it is locked.'
+            ? 'Submitted evaluation loaded. It remains editable until locked.'
             : 'Draft scorecard loaded',
       );
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Không mở được scorecard');
+      toast.error(err instanceof Error ? err.message : 'Could not open the scorecard');
     } finally {
       setLoadingEvaluation(false);
     }
@@ -500,24 +726,36 @@ export function JudgeScoringPage() {
   useEffect(() => {
     if (!selectedSubmissionId) {
       setEvaluation(null);
-      setAudit([]);
-      setStatusMessage('Select an assigned submission to start scoring');
+      setHistory([]);
+      setStatusMessage('Select an assigned submission to start evaluating');
       return;
     }
 
-    if (selectedSubmission?.evaluationId) {
-      void openScorecard(selectedSubmission);
+    const currentSubmission = assigned.find(item => item.submissionId === selectedSubmissionId);
+
+    if (currentSubmission?.evaluationId) {
+       const fetchExisting = async () => {
+         setLoadingEvaluation(true);
+         try {
+            const detail = await getEvaluation(currentSubmission.evaluationId!);
+            setEvaluation(detail);
+            const historyResponse = await getEvaluationHistory(detail.id);
+            setHistory(historyResponse.items ?? []);
+            const isLocked = detail.status === 'LOCKED' || !!detail.lockedAt;
+            setStatusMessage(isLocked ? 'Locked scorecard loaded' : detail.status === 'SUBMITTED' ? 'Submitted evaluation loaded.' : 'Draft scorecard loaded');
+         } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Could not open scorecard');
+         } finally {
+            setLoadingEvaluation(false);
+         }
+       };
+       void fetchExisting();
     } else {
       setEvaluation(null);
-      setAudit([]);
+      setHistory([]);
       setStatusMessage('This submission has not been started yet. Open the scorecard to begin.');
     }
-  }, [openScorecard, selectedSubmission?.evaluationId, selectedSubmissionId]);
-
-  // Change-history is loaded on demand; reset it whenever the open scorecard changes.
-  useEffect(() => {
-    setHistory(null);
-  }, [evaluation?.id]);
+  }, [selectedSubmissionId]); 
 
   const totalRawScore = useMemo(() => {
     return currentCriteria.reduce((sum, criterion) => {
@@ -534,10 +772,11 @@ export function JudgeScoringPage() {
     }, 0);
   }, [currentCriteria, draftScores]);
 
-  const canEdit = !!evaluation && evaluation.status !== 'LOCKED' && !evaluation.lockedAt;
-  const canSubmit = canEdit;
+  const isLockedReadOnly = !!evaluation && (evaluation.status === 'LOCKED' || !!evaluation.lockedAt);
+  const canEdit = !!evaluation && !isLockedReadOnly && (evaluation.status === 'DRAFT' || evaluation.status === 'SUBMITTED');
+  const canSubmit = !!evaluation && evaluation.status === 'DRAFT' && canEdit;
   const primarySaveLabel = evaluation?.status === 'SUBMITTED' ? 'Save Changes' : 'Save Draft';
-  const submitLabel = evaluation?.status === 'SUBMITTED' ? 'Resubmit Scorecard' : 'Submit Scorecard';
+  const submitLabel = 'Submit Final Evaluation';
 
   const saveDraft = useCallback(async () => {
     if (!evaluation) return;
@@ -554,6 +793,12 @@ export function JudgeScoringPage() {
         if (scoreValue == null) {
           throw new Error(`Please enter a score for ${criterion.criterionName}`);
         }
+        if (scoreValue < 0) {
+          throw new Error(`${criterion.criterionName} score cannot be negative`);
+        }
+        if (criterion.maxScore != null && scoreValue > Number(criterion.maxScore)) {
+          throw new Error(`${criterion.criterionName} score cannot exceed ${criterion.maxScore}`);
+        }
         return {
           criterionId: criterion.criterionId,
           scoreValue,
@@ -566,7 +811,8 @@ export function JudgeScoringPage() {
         scores: payloadScores,
       });
       setEvaluation(updated);
-      setAudit(await getEvaluationAudit(updated.id));
+      const historyResponse = await getEvaluationHistory(updated.id);
+      setHistory(historyResponse.items ?? []);
       setAssigned(prev =>
         prev.map(item =>
           item.submissionId === updated.submissionId
@@ -593,6 +839,10 @@ export function JudgeScoringPage() {
       toast.error('Locked evaluations cannot be changed');
       return;
     }
+    if (evaluation.status !== 'DRAFT') {
+      toast.error('This evaluation has already been submitted. Use Save Changes to record updates in history.');
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -601,6 +851,12 @@ export function JudgeScoringPage() {
         const scoreValue = normalizeScoreValue(draft?.scoreValue ?? '');
         if (scoreValue == null) {
           throw new Error(`Please enter a score for ${criterion.criterionName}`);
+        }
+        if (scoreValue < 0) {
+          throw new Error(`${criterion.criterionName} score cannot be negative`);
+        }
+        if (criterion.maxScore != null && scoreValue > Number(criterion.maxScore)) {
+          throw new Error(`${criterion.criterionName} score cannot exceed ${criterion.maxScore}`);
         }
         return {
           criterionId: criterion.criterionId,
@@ -617,7 +873,8 @@ export function JudgeScoringPage() {
         generalComment: draftComment.trim() || undefined,
       });
       setEvaluation(submitted);
-      setAudit(await getEvaluationAudit(submitted.id));
+      const historyResponse = await getEvaluationHistory(submitted.id);
+      setHistory(historyResponse.items ?? []);
       setAssigned(prev =>
         prev.map(item =>
           item.submissionId === submitted.submissionId
@@ -631,7 +888,8 @@ export function JudgeScoringPage() {
         ),
       );
       toast.success('Evaluation submitted');
-      setStatusMessage('Scorecard submitted. You can still edit until it is locked.');
+      setStatusMessage('Evaluation submitted. It remains editable until locked; future changes will be recorded in history.');
+      setConfirmSubmitOpen(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Submit failed');
     } finally {
@@ -640,11 +898,21 @@ export function JudgeScoringPage() {
   }, [canEdit, currentCriteria, draftComment, draftScores, evaluation]);
 
   return (
-    <div className="p-7 space-y-5">
-      <PageHeader title="Score Entry" subtitle="Chọn đúng bài nộp để biết rõ Event, Round, Category và Team đang được chấm" />
+    <div className="h-[calc(100vh-64px)] p-7 overflow-hidden flex flex-col">
+      <PageHeader
+        title="Evaluation"
+        subtitle={
+          selectedSubmission
+            ? `${selectedSubmission.eventName} / ${selectedSubmission.roundName} / ${selectedSubmission.teamName} / Attempt #${selectedSubmission.attemptNumber}`
+            : 'Choose an assigned submission to start or continue scoring'
+        }
+      />
 
-      <div className="grid grid-cols-3 gap-5">
-        <div className="col-span-2 space-y-5">
+      {/* --- MASTER-DETAIL LAYOUT --- */}
+      <div className="flex gap-5 flex-1 min-h-0">
+        
+        {/* CỘT TRÁI: DANH SÁCH BÀI THI */}
+        <div className="w-1/3 flex flex-col min-h-0 overflow-y-auto pr-1">
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
             <div className="flex items-center justify-between mb-4">
               <div>
@@ -656,339 +924,388 @@ export function JudgeScoringPage() {
               </button>
             </div>
 
+            <div className="mb-4">
+              <AssignmentFilterBar
+                items={assigned}
+                filters={assignmentFilters}
+                onChange={patch => setAssignmentFilters(prev => ({ ...prev, ...patch }))}
+              />
+            </div>
+
             {loadingAssignments ? (
               <p className="text-sm text-slate-500">Loading assignments...</p>
             ) : assigned.length === 0 ? (
               <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-                No assigned submissions found for this judge.
+                No submissions are currently assigned to you for scoring.
+              </div>
+            ) : visibleAssigned.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                No submissions match the current filters.
               </div>
             ) : (
               <div className="space-y-3">
-                {assigned.map(item => (
+                {visibleAssigned.map(item => (
                   <AssignedSubmissionCard
                     key={item.submissionId}
                     item={item}
                     selected={item.submissionId === selectedSubmissionId}
-                  onSelect={() => setSelectedSubmissionId(item.submissionId)}
-                  onOpen={() => {
-                    setSelectedSubmissionId(item.submissionId);
-                    void openScorecard(item);
-                  }}
+                    onSelect={() => setSelectedSubmissionId(item.submissionId)}
+                    onOpen={() => {
+                      setSelectedSubmissionId(item.submissionId);
+                      void openScorecard(item);
+                    }}
                   />
                 ))}
               </div>
             )}
           </div>
+        </div>
 
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="font-semibold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>Scorecard</h3>
-                <p className="text-sm text-slate-500">
-                  {selectedSubmission
-                    ? `${selectedSubmission.eventName} • ${selectedSubmission.roundName} • ${selectedSubmission.categoryName} • ${selectedSubmission.teamName}`
-                    : 'Chọn một assignment để bắt đầu'}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-mono text-slate-500">Raw {fmtNumber(totalRawScore, 1)}</span>
-                <span className="text-xs font-mono text-blue-800 bg-blue-50 px-2 py-1 rounded-full">Weighted {fmtNumber(totalWeightedScore, 2)}</span>
-              </div>
+        {/* CỘT PHẢI: FORM CHẤM ĐIỂM */}
+        <div className="w-2/3 flex flex-col min-h-0 overflow-y-auto bg-white rounded-xl shadow-sm border border-slate-200 p-5 relative">
+          {!selectedSubmission ? (
+            <div className="flex items-center justify-center h-full text-slate-400">
+              Select an assignment on the left to see the event, round, team, and attempt you are evaluating.
             </div>
-
-            {!selectedSubmission ? (
-              <p className="text-sm text-slate-500">Hãy chọn một assignment ở cột bên trái để biết bạn đang chấm bài nào.</p>
-            ) : !evaluation ? (
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                <p className="text-sm text-slate-600">
-                  Bài nộp này chưa được bắt đầu chấm. Bấm nút bên dưới để tạo scorecard cho đúng bài đang chọn.
+          ) : !evaluation ? (
+            <div className="flex flex-col items-center justify-center h-full">
+              <div className="w-full max-w-md rounded-lg border border-slate-200 bg-slate-50 p-8 text-center">
+                <p className="text-sm text-slate-600 mb-4">
+                  This submission has not been evaluated yet. Start an evaluation for the selected attempt.
                 </p>
                 <button
                   onClick={() => void openScorecard(selectedSubmission)}
                   disabled={loadingEvaluation}
-                  className="mt-3 inline-flex items-center gap-2 bg-blue-800 hover:bg-blue-900 disabled:opacity-50 text-white text-sm font-semibold px-4 py-2 rounded-lg"
+                  className="inline-flex items-center gap-2 bg-blue-800 hover:bg-blue-900 disabled:opacity-50 text-white text-sm font-semibold px-6 py-2.5 rounded-lg"
                 >
                   {loadingEvaluation ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                  Start scoring
+                  Start Evaluation
                 </button>
               </div>
-            ) : (
-              <div className="space-y-5">
-                <div className="grid grid-cols-3 gap-4">
-                  <MetricPill label="Event" value={evaluation.eventName ?? selectedSubmission.eventName} />
-                  <MetricPill label="Round" value={selectedSubmission.roundName} />
-                  <MetricPill label="Category" value={evaluation.categoryName ?? selectedSubmission.categoryName} />
-                  <MetricPill label="Team" value={evaluation.teamName ?? selectedSubmission.teamName} />
-                  <MetricPill label="Submission" value={`#${evaluation.submissionId}`} />
-                  <MetricPill label="Attempt" value={`v${evaluation.attemptNumber ?? selectedSubmission.attemptNumber}`} />
-                  <MetricPill label="Evaluation" value={`#${evaluation.id}`} />
-                  <MetricPill label="Judge" value={`#${evaluation.judgeId}`} />
-                  <MetricPill label="Status" value={evaluation.status} />
+            </div>
+          ) : (
+            <div className="space-y-6">
+              
+              {/* Context Metrics */}
+              <div className="grid grid-cols-3 gap-4">
+                <MetricPill label="Event" value={evaluation.eventName ?? selectedSubmission.eventName} />
+                <MetricPill label="Round" value={selectedSubmission.roundName} />
+                <MetricPill label="Team" value={evaluation.teamName ?? selectedSubmission.teamName} />
+                <MetricPill label="Category" value={evaluation.categoryName ?? selectedSubmission.categoryName} />
+                <MetricPill label="Attempt" value={`Attempt #${evaluation.attemptNumber ?? selectedSubmission.attemptNumber}`} />
+                <MetricPill label="Submitted At" value={fmtDate(selectedSubmission.submittedAt)} />
+                <MetricPill label="Evaluation Status" value={statusLabel(evaluation.status)} />
+                <MetricPill label="Round Status" value={evaluation.roundStatus ?? selectedSubmission.roundStatus ?? 'Unknown'} />
+                <MetricPill label="Rubric" value={`${currentCriteria.length} criteria`} />
+              </div>
+
+              {/* Repos & Links */}
+              <div className="rounded-xl border border-slate-200 p-4 bg-slate-50">
+                <div className="mb-4 space-y-1">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Evaluation context</p>
+                  <p className="text-sm text-slate-700">Event: <span className="font-semibold text-slate-900">{evaluation.eventName ?? selectedSubmission.eventName}</span></p>
+                  <p className="text-sm text-slate-700">Round: <span className="font-semibold text-slate-900">{selectedSubmission.roundName}</span></p>
+                  <p className="text-sm text-slate-700">Category: <span className="font-semibold text-slate-900">{evaluation.categoryName ?? selectedSubmission.categoryName}</span></p>
+                  <p className="text-sm text-slate-700">Team: <span className="font-semibold text-slate-900">{evaluation.teamName ?? selectedSubmission.teamName}</span></p>
                 </div>
 
-                <div className="rounded-xl border border-slate-200 p-4 bg-slate-50">
-                  <div className="mb-4 space-y-1">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Bạn đang chấm bài</p>
-                    <p className="text-sm text-slate-700">Event: <span className="font-semibold text-slate-900">{evaluation.eventName ?? selectedSubmission.eventName}</span></p>
-                    <p className="text-sm text-slate-700">Round: <span className="font-semibold text-slate-900">{selectedSubmission.roundName}</span></p>
-                    <p className="text-sm text-slate-700">Category: <span className="font-semibold text-slate-900">{evaluation.categoryName ?? selectedSubmission.categoryName}</span></p>
-                    <p className="text-sm text-slate-700">Team: <span className="font-semibold text-slate-900">{evaluation.teamName ?? selectedSubmission.teamName}</span></p>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <p className="text-xs text-slate-500">Repository</p>
+                    <a href={evaluation.repoUrl ?? selectedSubmission.repoUrl ?? '#'} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-blue-700 hover:underline break-all">
+                      <ExternalLink className="w-3.5 h-3.5" /> {evaluation.repoUrl ?? selectedSubmission.repoUrl ?? '?'}
+                    </a>
                   </div>
-
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <p className="text-xs text-slate-500">Repository</p>
-                      <a href={evaluation.repoUrl ?? selectedSubmission.repoUrl ?? '#'} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-blue-700 hover:underline break-all">
-                        <ExternalLink className="w-3.5 h-3.5" /> {evaluation.repoUrl ?? selectedSubmission.repoUrl ?? '?'}
+                  <div>
+                    <p className="text-xs text-slate-500">Demo / Slides</p>
+                    {evaluation.demoUrl ?? selectedSubmission.demoUrl ? (
+                      <a
+                        href={evaluation.demoUrl ?? selectedSubmission.demoUrl ?? '#'}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-cyan-700 hover:underline break-all"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" /> {evaluation.demoUrl ?? selectedSubmission.demoUrl}
                       </a>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500">Demo / Slides</p>
-                      {evaluation.demoUrl ?? selectedSubmission.demoUrl ? (
-                        <a
-                          href={evaluation.demoUrl ?? selectedSubmission.demoUrl ?? '#'}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-cyan-700 hover:underline break-all"
-                        >
-                          <ExternalLink className="w-3.5 h-3.5" /> {evaluation.demoUrl ?? selectedSubmission.demoUrl}
-                        </a>
-                      ) : (
-                        <p className="text-slate-700 break-all">?</p>
-                      )}
-                      {evaluation.slideUrl ?? selectedSubmission.slideUrl ? (
-                        <a
-                          href={evaluation.slideUrl ?? selectedSubmission.slideUrl ?? '#'}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-purple-700 hover:underline break-all mt-1"
-                        >
-                          <ExternalLink className="w-3.5 h-3.5" /> {evaluation.slideUrl ?? selectedSubmission.slideUrl}
-                        </a>
-                      ) : (
-                        <p className="text-slate-700 break-all mt-1">?</p>
-                      )}
-                    </div>
+                    ) : (
+                      <p className="text-slate-700 break-all">?</p>
+                    )}
+                    {evaluation.slideUrl ?? selectedSubmission.slideUrl ? (
+                      <a
+                        href={evaluation.slideUrl ?? selectedSubmission.slideUrl ?? '#'}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-purple-700 hover:underline break-all mt-1"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" /> {evaluation.slideUrl ?? selectedSubmission.slideUrl}
+                      </a>
+                    ) : (
+                      <p className="text-slate-700 break-all mt-1">?</p>
+                    )}
                   </div>
                 </div>
-                <div className="space-y-4">
-                  {currentCriteria.map(criterion => {
-                    const draft = draftScores[criterion.criterionId] ?? { scoreValue: '', comment: '' };
-                    return (
-                      <div key={criterion.criterionId} className="p-4 rounded-xl border border-slate-200">
-                        <div className="flex items-start justify-between gap-3 mb-2">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-semibold text-slate-900 text-sm">{criterion.criterionName}</span>
-                              <span className="text-xs text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded font-mono">#{criterion.displayOrder ?? criterion.criterionId}</span>
-                            </div>
-                            <p className="text-xs text-slate-500 mt-0.5">{criterion.criterionDescription}</p>
-                          </div>
-                          <div className="text-right">
-                            <span className="text-2xl font-bold font-mono text-blue-800">{draft.scoreValue || '—'}</span>
-                            <span className="text-slate-400 font-mono">/{criterion.maxScore}</span>
-                          </div>
-                        </div>
+              </div>
 
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-xs font-medium text-slate-600 mb-1">Score value</label>
-                            <input
-                              type="number"
-                              min="0"
-                              max={criterion.maxScore ?? undefined}
-                              step="0.5"
-                              disabled={!canEdit}
-                              value={draft.scoreValue}
-                              onChange={e =>
-                                setDraftScores(prev => ({
-                                  ...prev,
-                                  [criterion.criterionId]: { ...draft, scoreValue: e.target.value },
-                                }))
-                              }
-                              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:bg-slate-50"
-                            />
+              {/* Criteria Inputs */}
+              <div className="space-y-4">
+                {currentCriteria.map(criterion => {
+                  const draft = draftScores[criterion.criterionId] ?? { scoreValue: '', comment: '' };
+                  return (
+                    <div key={criterion.criterionId} className="p-4 rounded-xl border border-slate-200">
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-slate-900 text-sm">{criterion.criterionName}</span>
+                            <span className="text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">Criterion {criterion.displayOrder ?? ''}</span>
                           </div>
-                          <div>
-                            <label className="block text-xs font-medium text-slate-600 mb-1">Weighted contribution</label>
-                            <div className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-slate-50 text-slate-700">
-                              {draft.scoreValue && criterion.maxScore && criterion.weight
-                                ? fmtNumber((Number(draft.scoreValue) / Number(criterion.maxScore)) * Number(criterion.weight), 2)
-                                : '—'}
-                            </div>
-                          </div>
+                          <p className="text-xs text-slate-500 mt-0.5">{criterion.criterionDescription}</p>
                         </div>
+                        <div className="text-right">
+                          <span className="text-2xl font-bold font-mono text-blue-800">{draft.scoreValue || '—'}</span>
+                          <span className="text-slate-400 font-mono">/{criterion.maxScore}</span>
+                        </div>
+                      </div>
 
-                        <div className="mt-3">
-                          <label className="block text-xs font-medium text-slate-600 mb-1">Comment</label>
-                          <textarea
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-medium text-slate-600 mb-1">Score value</label>
+                          <input
+                            type="number"
+                            min="0"
+                            max={criterion.maxScore ?? undefined}
+                            step="0.5"
                             disabled={!canEdit}
-                            value={draft.comment}
+                            value={draft.scoreValue}
                             onChange={e =>
                               setDraftScores(prev => ({
                                 ...prev,
-                                [criterion.criterionId]: { ...draft, comment: e.target.value },
+                                [criterion.criterionId]: { ...draft, scoreValue: e.target.value },
                               }))
                             }
-                            rows={2}
-                            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:bg-slate-50"
-                            placeholder="Scoring note for this criterion"
+                            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:bg-slate-50"
                           />
                         </div>
+                        <div>
+                          <label className="block text-xs font-medium text-slate-600 mb-1">
+                            Weighted score <span className="font-normal text-slate-400">(Weight: {criterion.weight})</span>
+                          </label>
+                          <div className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-slate-50 text-slate-700">
+                            {draft.scoreValue && criterion.maxScore && criterion.weight
+                              ? fmtNumber((Number(draft.scoreValue) / Number(criterion.maxScore)) * Number(criterion.weight), 2)
+                              : '—'}
+                          </div>
+                        </div>
                       </div>
-                    );
-                  })}
+
+                      <div className="mt-3">
+                        <label className="block text-xs font-medium text-slate-600 mb-1">Comment</label>
+                        <textarea
+                          disabled={!canEdit}
+                          value={draft.comment}
+                          onChange={e =>
+                            setDraftScores(prev => ({
+                              ...prev,
+                              [criterion.criterionId]: { ...draft, comment: e.target.value },
+                            }))
+                          }
+                          rows={2}
+                          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:bg-slate-50"
+                          placeholder="Scoring note for this criterion"
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* General Comment */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">General comment</label>
+                <textarea
+                  disabled={!canEdit}
+                  value={draftComment}
+                  onChange={e => setDraftComment(e.target.value)}
+                  rows={3}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:bg-slate-50"
+                  placeholder="Overall notes for the submission"
+                />
+              </div>
+
+              {/* Alert Messages */}
+              {evaluation.status === 'SUBMITTED' && canEdit && (
+                <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5">
+                  <CheckCircle2 className="w-4 h-4 text-blue-600" />
+                  <p className="text-sm text-blue-700">
+                    This evaluation has been submitted but is still editable until it is locked. All changes are saved to history.
+                  </p>
                 </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">General comment</label>
-                  <textarea
-                    disabled={!canEdit}
-                    value={draftComment}
-                    onChange={e => setDraftComment(e.target.value)}
-                    rows={3}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:bg-slate-50"
-                    placeholder="Overall notes for the submission"
-                  />
+              )}
+              {!canEdit && (
+                <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-600" />
+                  <p className="text-sm text-amber-700">
+                    This evaluation is locked and can no longer be edited.
+                  </p>
                 </div>
+              )}
 
-                {!canEdit && (
-                  <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5">
-                    <AlertTriangle className="w-4 h-4 text-amber-600" />
-                    <p className="text-sm text-amber-700">Locked evaluations are immutable.</p>
-                  </div>
-                )}
-
-                <div className="flex items-center gap-3">
+              {/* Sticky Action Buttons */}
+              {canEdit && (
+                <div className="sticky bottom-0 bg-white pt-4 pb-2 border-t border-slate-100 z-10 flex items-center gap-3">
                   <button
                     onClick={() => void saveDraft()}
-                    disabled={!canEdit || saving || loadingEvaluation}
+                    disabled={saving || loadingEvaluation}
                     className="flex items-center gap-2 border border-slate-200 text-slate-600 text-sm font-medium px-5 py-2.5 rounded-xl hover:bg-slate-50 transition-colors disabled:opacity-50"
                   >
                     <Save className="w-4 h-4" /> {saving ? 'Saving...' : primarySaveLabel}
                   </button>
                   <button
-                    onClick={() => void submit()}
+                    onClick={() => setConfirmSubmitOpen(true)}
                     disabled={!canSubmit || submitting || loadingEvaluation}
-                    className="flex items-center gap-2 bg-blue-800 hover:bg-blue-900 text-white text-sm font-semibold px-6 py-2.5 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className={`${canSubmit ? 'flex' : 'hidden'} items-center gap-2 bg-blue-800 hover:bg-blue-900 text-white text-sm font-semibold px-6 py-2.5 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed`}
                   >
                     <Send className="w-4 h-4" /> {submitting ? 'Submitting...' : submitLabel}
                   </button>
                 </div>
-              </div>
-            )}
-          </div>
-        </div>
+              )}
 
-        <div className="space-y-4">
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
-            <h4 className="text-sm font-semibold text-slate-900 mb-3">Audit log</h4>
-            {evaluation ? (
-              audit.length === 0 ? (
-                <p className="text-xs text-slate-500">No audit entries yet.</p>
-              ) : (
-                <div className="space-y-3">
-                  {audit.map(entry => (
-                    <div key={entry.id} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-xs font-semibold text-slate-800">{entry.actionType}</p>
-                        <span className="text-[10px] text-slate-400">{fmtDate(entry.createdAt)}</span>
+              {/* History & Summary (Gom xuống dưới cùng Form) */}
+              <div className="grid grid-cols-2 gap-6 pt-6 border-t border-slate-200">
+                {/* Scoring History */}
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-900 mb-3">Scoring History</h4>
+                  {history.length === 0 ? (
+                    <p className="text-xs text-slate-500">No history entries yet.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-2">
+                        <select
+                          value={auditFilters.action}
+                          onChange={e => setAuditFilters(prev => ({ ...prev, action: e.target.value as AuditFilterState['action'] }))}
+                          className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white"
+                        >
+                          <option value="ALL">All actions</option>
+                          <option value="SCORE">Score changes</option>
+                          <option value="EVALUATION">Evaluation status</option>
+                          <option value="COMMENT">Comment changes</option>
+                        </select>
+                        <select
+                          value={auditFilters.sort}
+                          onChange={e => setAuditFilters(prev => ({ ...prev, sort: e.target.value as AuditFilterState['sort'] }))}
+                          className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white"
+                        >
+                          <option value="newest">Newest first</option>
+                          <option value="oldest">Oldest first</option>
+                        </select>
+                        <input
+                          type="date"
+                          value={auditFilters.dateFrom}
+                          onChange={e => setAuditFilters(prev => ({ ...prev, dateFrom: e.target.value }))}
+                          className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white"
+                        />
+                        <input
+                          type="date"
+                          value={auditFilters.dateTo}
+                          onChange={e => setAuditFilters(prev => ({ ...prev, dateTo: e.target.value }))}
+                          className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white"
+                        />
                       </div>
-                      <p className="text-[11px] text-slate-500 mt-0.5">
-                        {entry.targetType} #{entry.targetId} · {entry.actorName ?? entry.actorEmail ?? 'System'}
-                      </p>
-                      <details className="mt-2">
-                        <summary className="cursor-pointer text-[11px] text-blue-700">Show payload</summary>
-                        <pre className="mt-2 text-[11px] text-slate-600 whitespace-pre-wrap break-words">
-{`old: ${entry.oldValue ?? 'null'}
-new: ${entry.newValue ?? 'null'}`}
-                        </pre>
-                      </details>
+
+                      {visibleHistory.length === 0 ? (
+                        <p className="text-xs text-slate-500">No history entries match the current filters.</p>
+                      ) : visibleHistory.map((entry, index) => (
+                          <div key={`${entry.occurredAt ?? 'history'}-${entry.actionType}-${index}`} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-xs font-semibold text-slate-800">{entry.actionLabel}</p>
+                              <span className="text-[10px] text-slate-400">{fmtDate(entry.occurredAt)}</span>
+                            </div>
+                            <p className="mt-2 text-[11px] text-slate-700">{entry.description ?? 'History event recorded'}</p>
+                            {(entry.oldScoreValue != null || entry.newScoreValue != null) && (
+                              <p className="mt-1 text-[11px] text-slate-600">
+                                Score: {entry.oldScoreValue ?? 'empty'} → {entry.newScoreValue ?? 'empty'}
+                              </p>
+                            )}
+                            {(entry.oldComment != null || entry.newComment != null) && (
+                              <p className="mt-1 text-[11px] text-slate-600">
+                                Comment: {entry.oldComment ?? 'empty'} → {entry.newComment ?? 'empty'}
+                              </p>
+                            )}
+                            {(entry.oldStatus != null || entry.newStatus != null) && (
+                              <p className="mt-1 text-[11px] text-slate-600">
+                                Status: {entry.oldStatus ?? 'empty'} → {entry.newStatus ?? 'empty'}
+                              </p>
+                            )}
+                            <p className="mt-1 text-[11px] text-slate-500">
+                              {[entry.criterionName, entry.actorName ?? 'System'].filter(Boolean).join(' · ')}
+                            </p>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
                 </div>
-              )
-            ) : (
-              <p className="text-xs text-slate-500">Open a scorecard to see audit history.</p>
-            )}
-          </div>
 
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h4 className="text-sm font-semibold text-slate-900">Change history</h4>
-              <button
-                type="button"
-                disabled={!evaluation || loadingHistory}
-                onClick={async () => {
-                  if (!evaluation) return;
-                  setLoadingHistory(true);
-                  try {
-                    const h = await getEvaluationHistory(evaluation.id);
-                    setHistory(h.items);
-                  } catch {
-                    setHistory([]);
-                  } finally {
-                    setLoadingHistory(false);
-                  }
-                }}
-                className="text-[11px] text-blue-700 disabled:text-slate-300"
-              >
-                {loadingHistory ? 'Loading...' : 'Load history'}
-              </button>
-            </div>
-            {history === null ? (
-              <p className="text-xs text-slate-500">Click "Load history" to view this scorecard's change history.</p>
-            ) : history.length === 0 ? (
-              <p className="text-xs text-slate-500">No history entries.</p>
-            ) : (
-              <div className="space-y-3">
-                {history.map((h, i) => (
-                  <div key={i} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-xs font-semibold text-slate-800">{h.actionLabel ?? h.actionType}</p>
-                      <span className="text-[10px] text-slate-400">{fmtDate(h.occurredAt)}</span>
+                {/* Score Summary */}
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-900 mb-3">Score summary</h4>
+                  <div className="space-y-2.5 text-xs p-4 rounded-xl border border-slate-200 bg-slate-50">
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Raw total</span>
+                      <span className="text-slate-900 font-medium">{fmtNumber(totalRawScore, 1)}</span>
                     </div>
-                    {h.criterionName ? (
-                      <p className="text-[11px] text-slate-500 mt-0.5">{h.criterionName}</p>
-                    ) : null}
-                    {h.oldScoreValue != null || h.newScoreValue != null ? (
-                      <p className="text-[11px] text-slate-600 mt-1">
-                        {h.oldScoreValue ?? '—'} → {h.newScoreValue ?? '—'}
-                      </p>
-                    ) : null}
-                    {h.description ? (
-                      <p className="text-[11px] text-slate-500 mt-1">{h.description}</p>
-                    ) : null}
-                    <p className="text-[10px] text-slate-400 mt-1">{h.actorName ?? 'System'}</p>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Weighted total</span>
+                      <span className="text-slate-900 font-medium">{fmtNumber(totalWeightedScore, 2)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Criteria</span>
+                      <span className="text-slate-900 font-medium">{currentCriteria.length}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Selected attempt</span>
+                      <span className="text-slate-900 font-medium">{selectedSubmission ? `Attempt #${selectedSubmission.attemptNumber}` : '—'}</span>
+                    </div>
                   </div>
-                ))}
+                </div>
               </div>
-            )}
-          </div>
 
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
-            <h4 className="text-sm font-semibold text-slate-900 mb-3">Score summary</h4>
-            <div className="space-y-2.5 text-xs">
-              <div className="flex justify-between">
-                <span className="text-slate-500">Raw total</span>
-                <span className="text-slate-900 font-medium">{fmtNumber(totalRawScore, 1)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Weighted total</span>
-                <span className="text-slate-900 font-medium">{fmtNumber(totalWeightedScore, 2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Criteria</span>
-                <span className="text-slate-900 font-medium">{currentCriteria.length}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Selected submission</span>
-                <span className="text-slate-900 font-medium">{selectedSubmission?.submissionId ?? '—'}</span>
-              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
+
+      {/* Modal Submit Final */}
+      {confirmSubmitOpen && evaluation && (
+        <Modal
+          title="Submit final evaluation"
+          subtitle="This marks the evaluation as submitted. It can still be edited until locked, and every change is saved to history."
+          onClose={() => setConfirmSubmitOpen(false)}
+          size="sm"
+          footer={
+            <>
+              <button
+                onClick={() => setConfirmSubmitOpen(false)}
+                disabled={submitting}
+                className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-lg hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void submit()}
+                disabled={submitting}
+                className="px-4 py-2 bg-blue-800 hover:bg-blue-900 disabled:opacity-50 text-white text-sm font-semibold rounded-lg"
+              >
+                {submitting ? 'Submitting...' : 'Submit Final'}
+              </button>
+            </>
+          }
+        >
+          <p className="text-sm text-slate-600">
+            You are submitting the scorecard for {evaluation.teamName ?? selectedSubmission?.teamName ?? 'this team'}.
+            Scores and comments can still be edited until the evaluation is locked.
+          </p>
+        </Modal>
+      )}
     </div>
   );
 }
+
