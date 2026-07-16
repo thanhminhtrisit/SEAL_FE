@@ -303,8 +303,8 @@ function filterAndSortAudit(entries: EvaluationHistoryItem[], filters: AuditFilt
         && (to == null || createdAt <= to);
     })
     .sort((a, b) => filters.sort === 'newest'
-      ? toDateMs(b.createdAt) - toDateMs(a.createdAt)
-      : toDateMs(a.createdAt) - toDateMs(b.createdAt));
+      ? toDateMs(b.occurredAt) - toDateMs(a.occurredAt)
+      : toDateMs(a.occurredAt) - toDateMs(b.occurredAt));
 }
 
 function AssignedSubmissionCard({
