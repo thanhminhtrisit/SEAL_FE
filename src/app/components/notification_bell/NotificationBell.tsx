@@ -75,8 +75,7 @@ export const NotificationBell: React.FC = () => {
     setIsLoading(true);
     try {
       const res = await notificationApi.getMyNotifications(nextPage, 10);
-      const content = Array.isArray(res) ? res : ((res as any)?.content || (res as any)?.data?.content || []);
-      
+const content = await notificationApi.getMyNotifications(0, 10);      
       if (content.length > 0) {
         setNotifications(prev => [...prev, ...content]);
         setPage(nextPage);
