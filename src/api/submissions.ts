@@ -54,6 +54,7 @@ export interface SubmissionMyOverviewRound {
   submissionDeadline?: string | null;
   submissionRequirements: SubmissionRequirements;
   submission?: SubmissionMyOverviewSubmission | null;
+  isFinalRound?: boolean;
 }
 
 export interface SubmissionMyOverviewTeam {

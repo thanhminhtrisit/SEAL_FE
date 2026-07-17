@@ -33,7 +33,7 @@ import { MentorDashboard, MentorTeams } from './screens/MentorScreens';
 
 // Participant screens
 import {
-  ParticipantDashboard, TeamDetail, SubmitProject, NotificationsPage, MyInvitationsPage,
+  ParticipantDashboard, TeamDetail, SubmitProject, MyInvitationsPage,
 } from './screens/ParticipantScreens';
 
 
@@ -376,7 +376,7 @@ function ScreenRenderer({ screen, role, onNavigate, selectedEventId, onSelectEve
     case 'participant-invitations': return <MyInvitationsPage />;
     case 'participant-submit': return <SubmitProject />;
     case 'participant-results': return <ParticipantResultScreen />;
-    case 'participant-notifications': return <NotificationsPage />;
+  
 
     // Templates
     case 'templates-criteria': return <TemplateCenter />;
