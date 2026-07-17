@@ -27,6 +27,10 @@ export interface EventSummary {
   disciplineId?: number;
   disciplineName?: string | null;
   termPlanId?: number;
+  // Human-readable term plan info (present on detail responses) — prefer over the raw id in UI.
+  termPlanTerm?: string | null;
+  termPlanYear?: number | null;
+  termPlanLabel?: string | null;
   ownerCoordinatorId?: number | null;
   maxTeamSize?: number | null;
   maxTeams?: number | null;

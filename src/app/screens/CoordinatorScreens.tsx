@@ -80,29 +80,29 @@ function parseNumInput(e: React.ChangeEvent<HTMLInputElement>): number | '' {
   return isNaN(e.target.valueAsNumber) ? '' : e.target.valueAsNumber;
 }
 
-const sampleEvent = {
-  id: 1, name: 'SEAL Software Engineering Hackathon Summer 2026', type: 'SUMMER',
-  discipline: 'Software Engineering', term: 'Summer 2026', status: 'IN_PROGRESS',
-  registrationOpen: '2026-06-20', registrationClose: '2026-06-30',
-  eventStart: '2026-07-15', eventEnd: '2026-08-10',
-  teamsRegistered: 24, maxTeams: 40,
-  rounds: [
-    { id: 1, name: 'Preliminary Round', status: 'SCORING_OPEN', deadline: '2026-07-25', promotionTopN: 6 },
-    { id: 2, name: 'Final Round', status: 'DRAFT', deadline: '2026-08-08', promotionTopN: 3 },
-  ],
-  categories: ['Web Application', 'Mobile Application', 'AI/Automation Tool'],
-};
+// Gợi ý sức chứa: dư ~15% cho người thay thế/đăng ký muộn.
+const PARTICIPANT_BUFFER = 1.15;
+// Chính sách cố định, không co giãn theo quy mô team.
+const DEFAULT_TEAMS_PER_MENTOR = 3;
 
-const lifecycleSteps = [
-  { label: 'Draft', status: 'done', date: '2026-06-05' },
-  { label: 'Pending Approval', status: 'done', date: '2026-06-10' },
-  { label: 'Approved', status: 'done', date: '2026-06-12' },
-  { label: 'Open', status: 'done', date: '2026-06-20' },
-  { label: 'In Progress', status: 'current', date: '2026-07-15' },
-  { label: 'Completed', status: 'future', date: '—' },
-  { label: 'Archived', status: 'future', date: '—' },
+function suggestMaxParticipants(teamSize: number | '', teams: number | ''): number | '' {
+  const size = Number(teamSize) || 0;
+  const count = Number(teams) || 0;
+  if (size <= 0 || count <= 0) return '';
+  return Math.ceil(size * count * PARTICIPANT_BUFFER);
+}
+
+// Linear lifecycle, mirrors BE enum EventStatus (DRAFT→…→ARCHIVED).
+// REJECTED sits outside this flow — no step is marked current when the event is REJECTED.
+const LIFECYCLE_STEPS: { key: string; label: string }[] = [
+  { key: 'DRAFT', label: 'Draft' },
+  { key: 'PENDING_APPROVAL', label: 'Pending Approval' },
+  { key: 'APPROVED', label: 'Approved' },
+  { key: 'OPEN', label: 'Open' },
+  { key: 'IN_PROGRESS', label: 'In Progress' },
+  { key: 'COMPLETED', label: 'Completed' },
+  { key: 'ARCHIVED', label: 'Archived' },
 ];
-
 
 const pendingParticipants = [
   { id: 1, name: 'Nguyen Thanh Phong', email: 'phong.nt@student.fpt.edu.vn', type: 'FPT Student', studentId: 'SE171234', appliedDate: '2026-06-21' },
@@ -138,63 +138,162 @@ const submissions = [
 ];
 
 export function CoordDashboard({ onNavigate }: { onNavigate: (s: string) => void }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [eventCount, setEventCount] = useState(0);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [event, setEvent] = useState<EventSummary | null>(null);
+  const [rounds, setRounds] = useState<EventRound[]>([]);
+  const [teamCount, setTeamCount] = useState(0);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      // TODO(BE): filter events by owner — GET /api/events trả về TẤT CẢ event
+      // (EventSummaryResponse không có trường owner/creator), nên đây là tổng toàn hệ thống.
+      const evList = safeArray(await getEvents());
+      setEventCount(evList.length);
+
+      // PageResponse.totalElements = tổng thật; content chỉ là 1 trang (BE default size=20).
+      const pending = await getPendingAccounts();
+      setPendingCount(pending?.totalElements ?? 0);
+
+      // Featured: ưu tiên IN_PROGRESS, nếu không có thì lấy event mới nhất.
+      // EventSummaryResponse không có createdAt → dùng id lớn nhất làm "mới nhất".
+      const featured =
+        evList.find(e => e.status === 'IN_PROGRESS') ??
+        [...evList].sort((a, b) => b.id - a.id)[0];
+
+      if (!featured) {
+        setEvent(null);
+        setRounds([]);
+        setTeamCount(0);
+        return;
+      }
+
+      const [detail, roundList, teamList] = await Promise.all([
+        getEvent(featured.id),
+        getEventRounds(featured.id).then(safeArray),
+        getTeamsByEvent(featured.id).then(safeArray),
+      ]);
+      setEvent(detail);
+      setRounds(roundList);
+      setTeamCount(teamList.length);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Không tải được dashboard');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  // TODO(BE): scoping — chỉ đếm trong featured event; đếm across all events sẽ tốn N request rounds.
+  const scoringOpenCount = rounds.filter(r => r.status === 'SCORING_OPEN').length;
+
+  const currentIdx = event ? LIFECYCLE_STEPS.findIndex(s => s.key === event.status) : -1;
+  const dayOf = (s?: string | null) => (s ? s.slice(0, 10) : '—');
+  // TODO(BE): expose submittedAt/approvedAt/archivedAt trong EventResponse (Event entity đã có các cột này)
+  // → hiện chỉ Draft (createdAt) và Open (registrationStart) có mốc thật, các bước khác hiển thị "—".
+  const stepDate = (key: string) => {
+    if (key === 'DRAFT') return dayOf(event?.createdAt);
+    if (key === 'OPEN') return dayOf(event?.registrationStart);
+    return '—';
+  };
+
+  if (loading) {
+    return (
+      <div className="p-7">
+        <PageHeader title="Coordinator Dashboard" subtitle="Manage your events, teams, scoring, and results" />
+        <div className="flex items-center gap-2 text-slate-400 text-sm">
+          <RefreshCw className="w-4 h-4 animate-spin" /> Đang tải dashboard…
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-7 space-y-7">
       <PageHeader title="Coordinator Dashboard" subtitle="Manage your events, teams, scoring, and results" />
+
+      {error && (
+        <div className="p-3 text-sm text-red-700 bg-red-50 rounded-lg border border-red-200 flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={load} className="text-xs font-semibold text-red-700 hover:text-red-800">Thử lại</button>
+        </div>
+      )}
+
       <div className="grid grid-cols-4 gap-5">
-        <KPICard title="My Events" value="3" subtitle="Summer 2026" icon={Calendar} accent="blue" />
-        <KPICard title="Pending Participants" value="7" subtitle="Awaiting approval" icon={UserCheck} accent="amber" />
-        <KPICard title="Scoring Open" value="1" subtitle="Preliminary Round" icon={Lock} accent="cyan" />
-        <KPICard title="Results to Publish" value="0" subtitle="Final Round pending" icon={Globe} accent="purple" />
+        <KPICard title="My Events" value={eventCount} subtitle="Toàn hệ thống" icon={Calendar} accent="blue" />
+        <KPICard title="Pending Participants" value={pendingCount} subtitle="Awaiting approval" icon={UserCheck} accent="amber" />
+        <KPICard title="Scoring Open" value={scoringOpenCount} subtitle={event?.name ?? '—'} icon={Lock} accent="cyan" />
+        {/* TODO(BE): results-to-publish source — ResultPublication chỉ có entity + repository,
+            chưa có endpoint nào expose trạng thái đã/chưa công bố → không suy ra được ở client. */}
+        <KPICard title="Results to Publish" value="—" subtitle="Chưa có API" icon={Globe} accent="purple" />
       </div>
 
       {/* Active Event Card */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-        <div className="flex items-start justify-between mb-4">
-          <div>
-            <div className="flex items-center gap-2 mb-1"><StatusBadge status="IN_PROGRESS" /><span className="text-xs text-slate-400">SUMMER 2026</span></div>
-            <h2 className="text-lg font-bold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>{sampleEvent.name}</h2>
+      {!event ? (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 text-center">
+          <p className="text-sm text-slate-500">Chưa có event nào.</p>
+          <button onClick={() => onNavigate('coord-create')} className="mt-3 text-sm text-blue-700 hover:text-blue-800 font-medium">Tạo event mới</button>
+        </div>
+      ) : (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+          <div className="flex items-start justify-between mb-4">
+            <div>
+              <div className="flex items-center gap-2 mb-1"><StatusBadge status={event.status} /><span className="text-xs text-slate-400">{event.eventType}</span></div>
+              <h2 className="text-lg font-bold text-slate-900" style={{ fontFamily: 'var(--font-display)' }}>{event.name}</h2>
+            </div>
+            <button onClick={() => onNavigate('coord-events')} className="text-sm text-blue-700 hover:text-blue-800 font-medium flex items-center gap-1">View All Events <ChevronRight className="w-3.5 h-3.5" /></button>
           </div>
-          <button onClick={() => onNavigate('coord-events')} className="text-sm text-blue-700 hover:text-blue-800 font-medium flex items-center gap-1">View All Events <ChevronRight className="w-3.5 h-3.5" /></button>
-        </div>
 
-        {/* Lifecycle Timeline */}
-        <div className="flex items-center gap-0 mb-5">
-          {lifecycleSteps.map((step, i) => (
-            <React.Fragment key={step.label}>
-              <div className="flex flex-col items-center">
-                <div className={`w-7 h-7 rounded-full flex items-center justify-center border-2 flex-shrink-0 ${step.status === 'done' ? 'bg-emerald-500 border-emerald-500' : step.status === 'current' ? 'bg-blue-800 border-blue-800' : 'bg-white border-slate-300'}`}>
-                  {step.status === 'done' ? <Check className="w-3.5 h-3.5 text-white" /> : step.status === 'current' ? <span className="w-2 h-2 bg-white rounded-full" /> : <span className="w-2 h-2 bg-slate-300 rounded-full" />}
-                </div>
-                <p className={`text-[10px] mt-1.5 text-center w-14 ${step.status === 'current' ? 'text-blue-800 font-semibold' : step.status === 'done' ? 'text-emerald-700' : 'text-slate-400'}`}>{step.label}</p>
-                <p className="text-[9px] text-slate-400 font-mono mt-0.5">{step.date}</p>
-              </div>
-              {i < lifecycleSteps.length - 1 && <div className={`flex-1 h-0.5 mx-0.5 mb-5 ${step.status === 'done' ? 'bg-emerald-400' : 'bg-slate-200'}`} />}
-            </React.Fragment>
-          ))}
-        </div>
+          {/* Lifecycle Timeline */}
+          <div className="flex items-center gap-0 mb-5">
+            {LIFECYCLE_STEPS.map((step, i) => {
+              const state = currentIdx < 0 || i > currentIdx ? 'future' : i < currentIdx ? 'done' : 'current';
+              return (
+                <React.Fragment key={step.key}>
+                  <div className="flex flex-col items-center">
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center border-2 flex-shrink-0 ${state === 'done' ? 'bg-emerald-500 border-emerald-500' : state === 'current' ? 'bg-blue-800 border-blue-800' : 'bg-white border-slate-300'}`}>
+                      {state === 'done' ? <Check className="w-3.5 h-3.5 text-white" /> : state === 'current' ? <span className="w-2 h-2 bg-white rounded-full" /> : <span className="w-2 h-2 bg-slate-300 rounded-full" />}
+                    </div>
+                    <p className={`text-[10px] mt-1.5 text-center w-14 ${state === 'current' ? 'text-blue-800 font-semibold' : state === 'done' ? 'text-emerald-700' : 'text-slate-400'}`}>{step.label}</p>
+                    <p className="text-[9px] text-slate-400 font-mono mt-0.5">{stepDate(step.key)}</p>
+                  </div>
+                  {i < LIFECYCLE_STEPS.length - 1 && <div className={`flex-1 h-0.5 mx-0.5 mb-5 ${state === 'done' ? 'bg-emerald-400' : 'bg-slate-200'}`} />}
+                </React.Fragment>
+              );
+            })}
+          </div>
 
-        <div className="grid grid-cols-4 gap-4">
-          {[
-            { label: 'Teams Registered', value: '24 / 40', action: () => onNavigate('coord-teams') },
-            { label: 'Pending Participants', value: '7', action: () => onNavigate('coord-participants') },
-            { label: 'Submissions (Prelim)', value: '4 / 5 teams', action: () => onNavigate('coord-submissions') },
-            { label: 'Scores Completed', value: '7 / 14', action: () => onNavigate('coord-scoring') },
-          ].map(item => (
-            <button key={item.label} onClick={item.action} className="text-left p-3 rounded-lg border border-slate-100 hover:border-blue-200 hover:bg-blue-50/30 transition-colors">
-              <p className="text-xs text-slate-500">{item.label}</p>
-              <p className="text-lg font-bold text-slate-900 mt-0.5">{item.value}</p>
-            </button>
-          ))}
+          <div className="grid grid-cols-4 gap-4">
+            {[
+              { label: 'Teams Registered', value: `${teamCount} / ${event.maxTeams ?? '—'}`, action: () => onNavigate('coord-teams') },
+              { label: 'Pending Participants', value: String(pendingCount), action: () => onNavigate('coord-account-approvals') },
+              // TODO(BE): GET /api/events/{eventId}/rounds/{roundId}/submission-progress
+              { label: 'Submissions (Prelim)', value: '—', action: () => onNavigate('coord-submissions') },
+              // TODO(BE): GET /api/events/{eventId}/rounds/{roundId}/scoring-progress
+              { label: 'Scores Completed', value: '—', action: () => onNavigate('coord-scoring') },
+            ].map(item => (
+              <button key={item.label} onClick={item.action} className="text-left p-3 rounded-lg border border-slate-100 hover:border-blue-200 hover:bg-blue-50/30 transition-colors">
+                <p className="text-xs text-slate-500">{item.label}</p>
+                <p className="text-lg font-bold text-slate-900 mt-0.5">{item.value}</p>
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="grid grid-cols-2 gap-5">
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
           <h3 className="font-semibold text-slate-900 mb-3" style={{ fontFamily: 'var(--font-display)' }}>Active Rounds</h3>
-          {sampleEvent.rounds.map(r => (
+          {rounds.length === 0 ? (
+            <p className="text-sm text-slate-400 italic py-2">Chưa có vòng thi nào.</p>
+          ) : rounds.map(r => (
             <div key={r.id} className="flex items-center justify-between py-2.5 border-b border-slate-100 last:border-0">
-              <div><p className="text-sm font-medium text-slate-900">{r.name}</p><p className="text-xs text-slate-500">Deadline: {r.deadline}</p></div>
+              <div><p className="text-sm font-medium text-slate-900">{r.name}</p><p className="text-xs text-slate-500">Deadline: {dayOf(r.submissionDeadline)}</p></div>
               <StatusBadge status={r.status} />
             </div>
           ))}
@@ -203,7 +302,9 @@ export function CoordDashboard({ onNavigate }: { onNavigate: (s: string) => void
           <h3 className="font-semibold text-slate-900 mb-3" style={{ fontFamily: 'var(--font-display)' }}>Quick Actions</h3>
           <div className="grid grid-cols-2 gap-2">
             {[
-              { label: 'Approve Participants', icon: UserCheck, color: 'text-emerald-600', bg: 'bg-emerald-50 hover:bg-emerald-100', screen: 'coord-participants' },
+              // 'coord-participants' không nằm trong ROLE_ALLOWED_SCREENS của EVENT_COORDINATOR (App.tsx)
+              // → điều hướng tới đó bị chặn thành Access Denied. Màn đúng là 'coord-account-approvals'.
+              { label: 'Approve Participants', icon: UserCheck, color: 'text-emerald-600', bg: 'bg-emerald-50 hover:bg-emerald-100', screen: 'coord-account-approvals' },
               { label: 'Monitor Submissions', icon: Send, color: 'text-blue-600', bg: 'bg-blue-50 hover:bg-blue-100', screen: 'coord-submissions' },
               { label: 'Scoring Control', icon: Lock, color: 'text-amber-600', bg: 'bg-amber-50 hover:bg-amber-100', screen: 'coord-scoring' },
               { label: 'View Rankings', icon: Trophy, color: 'text-purple-600', bg: 'bg-purple-50 hover:bg-purple-100', screen: 'coord-ranking' },
@@ -2374,11 +2475,16 @@ export function EventDetailPage({
     name: string; submissionDeadline: string; scoringDeadline: string;
     promotionTopN: number | ''; finalRound: boolean;
     requiresRepo: boolean; requiresDemo: boolean; requiresSlide: boolean; requiresReport: boolean;
+    // Vị trí chèn (order) — chỉ dùng cho modal "Thêm Round"; edit round không đổi order.
+    orderNumber?: number | '';
   };
-  const [editRoundFields, setEditRoundFields] = useState<RoundEdit>({
+  const EMPTY_ROUND: RoundEdit = {
     name: '', submissionDeadline: '', scoringDeadline: '', promotionTopN: '', finalRound: false,
     requiresRepo: false, requiresDemo: false, requiresSlide: false, requiresReport: false,
-  });
+    orderNumber: '',
+  };
+  const [editRoundFields, setEditRoundFields] = useState<RoundEdit>(EMPTY_ROUND);
+  const [newRoundFields, setNewRoundFields] = useState<RoundEdit>(EMPTY_ROUND);
   const [deletingRoundId, setDeletingRoundId] = useState<number | null>(null);
 
   // Round lifecycle (FR-EVT-02): transition state + unlock-with-reason modal
@@ -2404,6 +2510,27 @@ export function EventDetailPage({
   type CapacityEdit = { maxTeamSize: number | ''; maxTeams: number | ''; maxParticipants: number | ''; maxTeamsPerMentor: number | '' };
   const [capacityEdit, setCapacityEdit] = useState<CapacityEdit>({ maxTeamSize: '', maxTeams: '', maxParticipants: '', maxTeamsPerMentor: '' });
   const [savingCapacity, setSavingCapacity] = useState(false);
+  // Field nào coordinator đã tự sửa → ngừng autofill field đó (link ↻ để xin gợi ý lại).
+  type CapacitySuggested = 'maxParticipants' | 'maxTeamsPerMentor';
+  const [capacityTouched, setCapacityTouched] = useState<Record<CapacitySuggested, boolean>>({ maxParticipants: false, maxTeamsPerMentor: false });
+  // Fallback nhãn term plan khi EventResponse không kèm label (map termPlanId qua GET /api/term-plans).
+  const [termPlanLabelFallback, setTermPlanLabelFallback] = useState<string | null>(null);
+
+  // Basic info editing (PATCH /api/events/{id} — name/description/registration window)
+  type BasicEdit = { name: string; description: string; registrationStart: string; registrationEnd: string };
+  const [basicEdit, setBasicEdit] = useState<BasicEdit>({ name: '', description: '', registrationStart: '', registrationEnd: '' });
+  const [savingBasic, setSavingBasic] = useState(false);
+
+  // Add round (POST /api/events/{eventId}/rounds)
+  const [addingRound, setAddingRound] = useState(false);
+  const [savingNewRound, setSavingNewRound] = useState(false);
+
+  // Add category (POST /api/events/{eventId}/categories)
+  type CategoryForm = { name: string; description: string; mentorId: number | '' };
+  const [addingCategory, setAddingCategory] = useState(false);
+  const [newCategory, setNewCategory] = useState<CategoryForm>({ name: '', description: '', mentorId: '' });
+  const [savingNewCategory, setSavingNewCategory] = useState(false);
+  const [editCategoryDescription, setEditCategoryDescription] = useState('');
 
   // Criteria set editing state
   type CriterionEdit = { id: number; name: string; maxScore: number; weight: number; description?: string };
@@ -2453,6 +2580,18 @@ export function EventDetailPage({
           maxParticipants: ev.maxParticipants ?? '',
           maxTeamsPerMentor: ev.maxTeamsPerMentor ?? '',
         });
+        // Giá trị đã lưu trên BE = lựa chọn có chủ đích trước đó → không autofill đè.
+        setCapacityTouched({
+          maxParticipants: ev.maxParticipants != null,
+          maxTeamsPerMentor: ev.maxTeamsPerMentor != null,
+        });
+        setBasicEdit({
+          name: ev.name ?? '',
+          description: ev.description ?? '',
+          // BE trả LocalDateTime "YYYY-MM-DDTHH:mm:ss" — input datetime-local cần "YYYY-MM-DDTHH:mm"
+          registrationStart: ev.registrationStart?.slice(0, 16) ?? '',
+          registrationEnd: ev.registrationEnd?.slice(0, 16) ?? '',
+        });
       })
       .catch(err => {
         const message = err instanceof Error ? err.message : 'Không tải được event';
@@ -2461,6 +2600,22 @@ export function EventDetailPage({
       })
       .finally(() => setLoading(false));
   }, [eventId]);
+
+  // Fallback: chỉ fetch term plans khi EventResponse thiếu label/term để map termPlanId → nhãn.
+  useEffect(() => {
+    if (!event) return;
+    if (event.termPlanLabel || event.termPlanTerm) { setTermPlanLabelFallback(null); return; }
+    if (event.termPlanId == null) return;
+    let cancelled = false;
+    getTermPlans()
+      .then(list => {
+        if (cancelled) return;
+        const tp = safeArray(list).find(t => t.id === event.termPlanId);
+        if (tp) setTermPlanLabelFallback(`${tp.term} ${tp.year}`);
+      })
+      .catch(() => { /* giữ fallback #id */ });
+    return () => { cancelled = true; };
+  }, [event]);
 
   const fmtDate = (s: string | null | undefined) =>
     s ? s.replace('T', ' ').slice(0, 16) : '—';
@@ -2568,6 +2723,7 @@ export function EventDetailPage({
     try {
       const updated = await updateCategory(eventId, editingCategory.id, {
         name: editCategoryName.trim(),
+        description: editCategoryDescription.trim(),
         mentorId: editCategoryMentorId !== '' ? Number(editCategoryMentorId) : null,
       });
       setCategories(prev => prev.map(c => c.id === editingCategory.id ? updated : c));
@@ -2721,8 +2877,55 @@ export function EventDetailPage({
     }
   };
 
+  const handleCapacityChange = (field: keyof CapacityEdit, value: number | '') => {
+    setCapacityEdit(prev => {
+      const next: CapacityEdit = { ...prev, [field]: value };
+      if (field === 'maxTeamSize' || field === 'maxTeams') {
+        if (!capacityTouched.maxParticipants) {
+          next.maxParticipants = suggestMaxParticipants(next.maxTeamSize, next.maxTeams);
+        }
+        if (!capacityTouched.maxTeamsPerMentor && (next.maxTeamSize !== '' || next.maxTeams !== '')) {
+          next.maxTeamsPerMentor = DEFAULT_TEAMS_PER_MENTOR;
+        }
+      }
+      return next;
+    });
+    if (field === 'maxParticipants' || field === 'maxTeamsPerMentor') {
+      setCapacityTouched(prev => ({ ...prev, [field]: true }));
+    }
+  };
+
+  const recalcCapacity = (field: CapacitySuggested) => {
+    setCapacityEdit(prev => ({
+      ...prev,
+      [field]: field === 'maxParticipants'
+        ? suggestMaxParticipants(prev.maxTeamSize, prev.maxTeams)
+        : DEFAULT_TEAMS_PER_MENTOR,
+    }));
+    setCapacityTouched(prev => ({ ...prev, [field]: false }));
+  };
+
+  // Sức chứa tối thiểu = mọi team đều đầy chỗ.
+  const capacityFloor = (Number(capacityEdit.maxTeamSize) || 0) * (Number(capacityEdit.maxTeams) || 0);
+  const capacityErrors: Partial<Record<keyof CapacityEdit, string>> = {};
+  if (capacityFloor > 0 && capacityEdit.maxParticipants !== '' && Number(capacityEdit.maxParticipants) < capacityFloor) {
+    capacityErrors.maxParticipants = `Phải ≥ ${capacityFloor} (${capacityEdit.maxTeamSize} × ${capacityEdit.maxTeams})`;
+  }
+  if (capacityEdit.maxTeamsPerMentor !== '' && Number(capacityEdit.maxTeamsPerMentor) < 1) {
+    capacityErrors.maxTeamsPerMentor = 'Phải ≥ 1';
+  }
+  const hasCapacityErrors = Object.keys(capacityErrors).length > 0;
+  // Chỉ hiển thị — BE không có field này.
+  const mentorsNeeded = (Number(capacityEdit.maxTeams) || 0) > 0 && (Number(capacityEdit.maxTeamsPerMentor) || 0) >= 1
+    ? Math.ceil(Number(capacityEdit.maxTeams) / Number(capacityEdit.maxTeamsPerMentor))
+    : null;
+
   const handleSaveCapacity = async () => {
     if (!event) return;
+    if (hasCapacityErrors) {
+      toast.error('Thông số sức chứa chưa hợp lệ');
+      return;
+    }
     setSavingCapacity(true);
     try {
       const req: UpdateEventRequest = {
@@ -2739,6 +2942,10 @@ export function EventDetailPage({
         maxParticipants: updated.maxParticipants ?? '',
         maxTeamsPerMentor: updated.maxTeamsPerMentor ?? '',
       });
+      setCapacityTouched({
+        maxParticipants: updated.maxParticipants != null,
+        maxTeamsPerMentor: updated.maxTeamsPerMentor != null,
+      });
       toast.success('Đã lưu thông số sức chứa');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Lưu sức chứa thất bại');
@@ -2747,7 +2954,125 @@ export function EventDetailPage({
     }
   };
 
+  // PATCH /api/events/{id} — chỉ gửi name/description/registration*, KHÔNG đụng capacity.
+  // EventServiceImpl.update() bỏ qua field null nên 2 form (Basic Info & Sức chứa) không ghi đè nhau.
+  const handleSaveBasic = async () => {
+    if (!event) return;
+    if (!basicEdit.name.trim()) { toast.error('Tên event không được trống'); return; }
+    const regStart = toDateTime(basicEdit.registrationStart);
+    const regEnd = toDateTime(basicEdit.registrationEnd);
+    // BR-EVT-01 — BE cũng chặn, check sớm ở client để báo lỗi ngay
+    if (regStart && regEnd && regStart >= regEnd) {
+      toast.error('Registration start phải trước registration end (BR-EVT-01)');
+      return;
+    }
+    setSavingBasic(true);
+    try {
+      const req: UpdateEventRequest = {
+        name: basicEdit.name.trim(),
+        // gửi '' (không phải undefined) để xoá được description — BE bỏ qua null/undefined
+        description: basicEdit.description.trim(),
+        registrationStart: regStart,
+        registrationEnd: regEnd,
+      };
+      const updated = await updateEvent(eventId, req);
+      setEvent(updated);
+      setBasicEdit({
+        name: updated.name ?? '',
+        description: updated.description ?? '',
+        registrationStart: updated.registrationStart?.slice(0, 16) ?? '',
+        registrationEnd: updated.registrationEnd?.slice(0, 16) ?? '',
+      });
+      toast.success('Đã lưu thông tin cơ bản');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Lưu thông tin cơ bản thất bại');
+    } finally {
+      setSavingBasic(false);
+    }
+  };
+
+  const handleCreateRound = async () => {
+    if (!newRoundFields.name.trim()) { toast.error('Tên round không được trống'); return; }
+    setSavingNewRound(true);
+    try {
+      const isFinal = newRoundFields.finalRound;
+      // final luôn ở cuối; non-final kẹp trong [1, upperBound] (BE cũng clamp lại y hệt).
+      const orderNumber = isFinal ? roundCount + 1 : clampInsertPos(newRoundFields.orderNumber);
+      await createRound(eventId, {
+        name: newRoundFields.name.trim(),
+        orderNumber,
+        submissionDeadline: toDateTime(newRoundFields.submissionDeadline, true),
+        scoringDeadline: toDateTime(newRoundFields.scoringDeadline, true),
+        promotionTopN: newRoundFields.promotionTopN !== '' ? Number(newRoundFields.promotionTopN) : undefined,
+        finalRound: isFinal,
+        requiresRepo: newRoundFields.requiresRepo,
+        requiresDemo: newRoundFields.requiresDemo,
+        requiresSlide: newRoundFields.requiresSlide,
+        requiresReport: newRoundFields.requiresReport,
+      });
+      // BE shift order các round khác → refetch để lấy order mới, không tự suy đoán.
+      const fresh = await getEventRounds(eventId).then(safeArray).catch(() => rounds);
+      setRounds([...fresh].sort((a, b) => (a.orderNumber ?? 0) - (b.orderNumber ?? 0)));
+      setAddingRound(false);
+      setNewRoundFields(EMPTY_ROUND);
+      toast.success(`Đã thêm round ở vị trí #${orderNumber}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Thêm round thất bại');
+    } finally {
+      setSavingNewRound(false);
+    }
+  };
+
+  const handleCreateCategory = async () => {
+    const name = newCategory.name.trim();
+    if (!name) { toast.error('Tên category không được trống'); return; }
+    // BR-EVT-04: tên category phải unique trong event — BE cũng chặn, check sớm cho UX
+    if (categories.some(c => c.name.trim().toLowerCase() === name.toLowerCase())) {
+      toast.error(`Category "${name}" đã tồn tại trong event này`);
+      return;
+    }
+    setSavingNewCategory(true);
+    try {
+      const created = await createCategory(eventId, {
+        name,
+        description: newCategory.description.trim() || undefined,
+        mentorId: newCategory.mentorId !== '' ? Number(newCategory.mentorId) : undefined,
+      });
+      setCategories(prev => [...prev, created]);
+      setAddingCategory(false);
+      setNewCategory({ name: '', description: '', mentorId: '' });
+      toast.success('Đã thêm category');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Thêm category thất bại');
+    } finally {
+      setSavingNewCategory(false);
+    }
+  };
+
+  // DRAFT/REJECTED — khớp với validateConfigEditable() của BE (round/category/criteria edits).
   const canEdit = event?.status === 'DRAFT' || event?.status === 'REJECTED';
+
+  // Ưu tiên nhãn dễ đọc từ BE, rồi tự ghép từ term+year, rồi fallback map qua term-plans, cuối cùng mới #id.
+  const termPlanDisplay = event
+    ? (event.termPlanLabel
+        ?? (event.termPlanTerm ? `${event.termPlanTerm}${event.termPlanYear != null ? ` ${event.termPlanYear}` : ''}` : null)
+        ?? termPlanLabelFallback
+        ?? (event.termPlanId != null ? `#${event.termPlanId}` : '—'))
+    : '—';
+
+  // ── Vị trí chèn round mới (khớp invariant BE: tối đa 1 final và final luôn ở cuối) ──
+  const existingFinalRound = rounds.find(r => r.finalRound);
+  const hasFinalRound = !!existingFinalRound;
+  const roundCount = rounds.length;
+  // Non-final chỉ được đặt TRƯỚC final: trần = order của final (nếu có) hoặc slot kế tiếp.
+  const nonFinalUpperBound = hasFinalRound ? (existingFinalRound!.orderNumber ?? roundCount) : roundCount + 1;
+  const insertPosOptions = Array.from({ length: Math.max(1, nonFinalUpperBound) }, (_, i) => i + 1);
+  const clampInsertPos = (v: number | '' | undefined) => {
+    const requested = v === '' || v == null ? nonFinalUpperBound : Number(v);
+    return Math.max(1, Math.min(requested, nonFinalUpperBound));
+  };
+  // Vị trí sẽ hiển thị ở preview: final → cuối; non-final → order đã kẹp.
+  const previewInsertPos = newRoundFields.finalRound ? roundCount + 1 : clampInsertPos(newRoundFields.orderNumber);
 
   if (loading) {
     return (
@@ -2811,6 +3136,95 @@ export function EventDetailPage({
         )}
       </div>
 
+      {/* Basic Info */}
+      <section className="bg-white rounded-xl shadow-sm border border-slate-200">
+        <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
+          <FileBarChart className="w-4 h-4 text-slate-400" />
+          <h2 className="text-sm font-semibold text-slate-700">Thông tin cơ bản</h2>
+        </div>
+        <div className="px-5 py-4 space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Tên event <span className="text-red-500">*</span></label>
+            <input
+              value={basicEdit.name}
+              onChange={e => setBasicEdit(prev => ({ ...prev, name: e.target.value }))}
+              disabled={!canEdit || savingBasic}
+              maxLength={200}
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Mô tả</label>
+            <textarea
+              value={basicEdit.description}
+              onChange={e => setBasicEdit(prev => ({ ...prev, description: e.target.value }))}
+              disabled={!canEdit || savingBasic}
+              rows={3}
+              placeholder="Mô tả ngắn về event…"
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Registration Opens</label>
+              <input
+                type="datetime-local"
+                value={basicEdit.registrationStart}
+                onChange={e => setBasicEdit(prev => ({ ...prev, registrationStart: e.target.value }))}
+                disabled={!canEdit || savingBasic}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Registration Closes</label>
+              <input
+                type="datetime-local"
+                value={basicEdit.registrationEnd}
+                onChange={e => setBasicEdit(prev => ({ ...prev, registrationEnd: e.target.value }))}
+                disabled={!canEdit || savingBasic}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50"
+              />
+            </div>
+          </div>
+
+          {/* Read-only — UpdateEventRequest không nhận discipline/termPlan/eventType (giữ toàn vẹn hạn mức term-plan) */}
+          <div className="grid grid-cols-3 gap-4 pt-1">
+            {([
+              ['Discipline', event.disciplineName ?? '—'],
+              ['Term Plan', termPlanDisplay],
+              ['Event Type', event.eventType ?? '—'],
+            ] as [string, string][]).map(([label, value]) => (
+              <div key={label}>
+                <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
+                <div className="w-full border border-slate-200 bg-slate-50 rounded-lg px-3 py-2 text-sm text-slate-500 font-mono flex items-center gap-1.5">
+                  <Lock className="w-3 h-3 text-slate-400 flex-shrink-0" />
+                  <span className="truncate">{value}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-slate-400">
+            Discipline / Term Plan / Event Type cố định từ lúc tạo để đảm bảo toàn vẹn hạn mức term-plan.
+            Muốn đổi thì phải xóa draft và tạo lại.
+          </p>
+
+          {canEdit ? (
+            <div className="flex justify-end">
+              <button
+                onClick={handleSaveBasic}
+                disabled={savingBasic}
+                className="flex items-center gap-1.5 bg-blue-800 hover:bg-blue-900 disabled:opacity-50 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+              >
+                {savingBasic ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                Lưu thông tin
+              </button>
+            </div>
+          ) : (
+            <p className="text-xs text-slate-400">Chỉ sửa được khi event ở trạng thái DRAFT hoặc REJECTED.</p>
+          )}
+        </div>
+      </section>
+
       {/* Capacity Settings */}
       <section className="bg-white rounded-xl shadow-sm border border-slate-200">
         <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
@@ -2820,29 +3234,58 @@ export function EventDetailPage({
         <div className="px-5 py-4">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             {([
-              ['maxTeamSize', 'Số thành viên tối đa/team'],
-              ['maxTeams', 'Số team tối đa'],
-              ['maxParticipants', 'Số người tham gia tối đa'],
-              ['maxTeamsPerMentor', 'Số team tối đa/mentor'],
-            ] as [keyof CapacityEdit, string][]).map(([field, label]) => (
+              ['maxTeamSize', 'Số thành viên tối đa/team', null],
+              ['maxTeams', 'Số team tối đa', null],
+              ['maxParticipants', 'Số người tham gia tối đa', 'maxParticipants'],
+              ['maxTeamsPerMentor', 'Số team tối đa/mentor', 'maxTeamsPerMentor'],
+            ] as [keyof CapacityEdit, string, CapacitySuggested | null][]).map(([field, label, suggested]) => (
               <div key={field}>
-                <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
+                <div className="flex items-baseline justify-between gap-1 mb-1">
+                  <label className="block text-xs font-medium text-slate-600">{label}</label>
+                  {suggested && canEdit && (
+                    <button
+                      type="button"
+                      onClick={() => recalcCapacity(suggested)}
+                      disabled={savingCapacity}
+                      title="Tính lại theo gợi ý"
+                      className="text-[10px] text-blue-700 hover:text-blue-900 hover:underline disabled:opacity-50 shrink-0"
+                    >
+                      ↻ tính lại
+                    </button>
+                  )}
+                </div>
                 <input
                   type="number" min={1}
                   value={capacityEdit[field] === 0 || capacityEdit[field] === '' ? '' : capacityEdit[field]}
-                  onChange={e => setCapacityEdit(prev => ({ ...prev, [field]: parseNumInput(e) }))}
+                  onChange={e => handleCapacityChange(field, parseNumInput(e))}
                   disabled={!canEdit || savingCapacity}
                   placeholder="—"
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50"
+                  className={`w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 disabled:opacity-50 disabled:bg-slate-50 ${
+                    capacityErrors[field]
+                      ? 'border-red-300 focus:ring-red-500'
+                      : 'border-slate-200 focus:ring-blue-700'
+                  }`}
                 />
+                {capacityErrors[field] && (
+                  <p className="mt-1 text-[10px] text-red-600">{capacityErrors[field]}</p>
+                )}
+                {!capacityErrors[field] && suggested && !capacityTouched[suggested] && capacityEdit[field] !== '' && (
+                  <p className="mt-1 text-[10px] text-slate-400">Gợi ý tự động</p>
+                )}
               </div>
             ))}
           </div>
+          {mentorsNeeded !== null && (
+            <p className="mt-3 text-xs text-slate-500">
+              Cần ~<span className="font-semibold text-slate-700">{mentorsNeeded}</span> mentor
+              <span className="text-slate-400"> ({capacityEdit.maxTeams} team ÷ {capacityEdit.maxTeamsPerMentor} team/mentor)</span>
+            </p>
+          )}
           {canEdit && (
             <div className="mt-3 flex justify-end">
               <button
                 onClick={handleSaveCapacity}
-                disabled={savingCapacity}
+                disabled={savingCapacity || hasCapacityErrors}
                 className="flex items-center gap-1.5 bg-blue-800 hover:bg-blue-900 disabled:opacity-50 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
               >
                 {savingCapacity
@@ -2860,9 +3303,17 @@ export function EventDetailPage({
 
       {/* Rounds */}
       <section className="bg-white rounded-xl shadow-sm border border-slate-200">
-        <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
-          <Layers className="w-4 h-4 text-slate-400" />
-          <h2 className="text-sm font-semibold text-slate-700">Rounds ({rounds.length})</h2>
+        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Layers className="w-4 h-4 text-slate-400" />
+            <h2 className="text-sm font-semibold text-slate-700">Rounds ({rounds.length})</h2>
+          </div>
+          {canEdit && (
+            <button onClick={() => { setNewRoundFields({ ...EMPTY_ROUND, orderNumber: nonFinalUpperBound }); setAddingRound(true); }}
+              className="flex items-center gap-1 text-xs text-blue-700 font-medium hover:text-blue-800 px-2.5 py-1.5 rounded-lg hover:bg-blue-50 transition-colors border border-blue-200">
+              <Plus className="w-3.5 h-3.5" /> Thêm round
+            </button>
+          )}
         </div>
         {rounds.length === 0 ? (
           <p className="px-5 py-6 text-sm text-slate-400 text-center">Chưa có round nào được cấu hình.</p>
@@ -3011,9 +3462,17 @@ export function EventDetailPage({
 
       {/* Categories */}
       <section className="bg-white rounded-xl shadow-sm border border-slate-200">
-        <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
-          <Tag className="w-4 h-4 text-slate-400" />
-          <h2 className="text-sm font-semibold text-slate-700">Categories ({categories.length})</h2>
+        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Tag className="w-4 h-4 text-slate-400" />
+            <h2 className="text-sm font-semibold text-slate-700">Categories ({categories.length})</h2>
+          </div>
+          {canEdit && (
+            <button onClick={() => { setNewCategory({ name: '', description: '', mentorId: '' }); setAddingCategory(true); }}
+              className="flex items-center gap-1 text-xs text-blue-700 font-medium hover:text-blue-800 px-2.5 py-1.5 rounded-lg hover:bg-blue-50 transition-colors border border-blue-200">
+              <Plus className="w-3.5 h-3.5" /> Thêm category
+            </button>
+          )}
         </div>
         {categories.length === 0 ? (
           <p className="px-5 py-6 text-sm text-slate-400 text-center">Chưa có category nào.</p>
@@ -3034,7 +3493,7 @@ export function EventDetailPage({
                   {canEdit && (
                     <div className="flex items-center gap-1">
                       <button
-                        onClick={() => { setEditingCategory(cat); setEditCategoryName(cat.name); setEditCategoryMentorId(cat.mentorId ?? ''); }}
+                        onClick={() => { setEditingCategory(cat); setEditCategoryName(cat.name); setEditCategoryDescription(cat.description ?? ''); setEditCategoryMentorId(cat.mentorId ?? ''); }}
                         className="p-1.5 rounded text-slate-400 hover:text-blue-700 hover:bg-blue-50 transition-colors"
                         title="Sửa category"
                       >
@@ -3331,8 +3790,153 @@ export function EventDetailPage({
               />
             </div>
             <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Mô tả</label>
+              <textarea
+                value={editCategoryDescription}
+                onChange={e => setEditCategoryDescription(e.target.value)}
+                rows={2}
+                placeholder="Mô tả ngắn…"
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-700"
+              />
+            </div>
+            <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1">Mentor (tùy chọn)</label>
               <select value={editCategoryMentorId} onChange={e => setEditCategoryMentorId(e.target.value === '' ? '' : Number(e.target.value))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 bg-white">
+                <option value="">-- Chưa gán mentor --</option>
+                {mentors.map(m => <option key={m.id} value={m.id}>{m.fullName} ({m.email})</option>)}
+              </select>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Add Round modal — POST /api/events/{eventId}/rounds */}
+      {addingRound && (
+        <Modal title="Thêm Round" subtitle="Round mới sẽ có trạng thái DRAFT"
+          onClose={() => setAddingRound(false)} size="md"
+          footer={
+            <>
+              <button onClick={() => setAddingRound(false)} disabled={savingNewRound} className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-lg hover:bg-slate-50 disabled:opacity-50">Huỷ</button>
+              <button onClick={handleCreateRound} disabled={savingNewRound || !newRoundFields.name.trim()}
+                className="px-4 py-2 bg-blue-800 hover:bg-blue-900 text-white text-sm font-semibold rounded-lg flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                {savingNewRound ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Thêm round
+              </button>
+            </>
+          }
+        >
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Tên round <span className="text-red-500">*</span></label>
+              <input value={newRoundFields.name} onChange={e => setNewRoundFields(p => ({ ...p, name: e.target.value }))}
+                maxLength={150} placeholder="VD: Preliminary Round"
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Submission Deadline</label>
+                <input type="date" value={newRoundFields.submissionDeadline} onChange={e => setNewRoundFields(p => ({ ...p, submissionDeadline: e.target.value }))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Scoring Deadline</label>
+                <input type="date" value={newRoundFields.scoringDeadline} onChange={e => setNewRoundFields(p => ({ ...p, scoringDeadline: e.target.value }))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Promote Top N Teams</label>
+                <input type="number" min={1} value={newRoundFields.promotionTopN === '' ? '' : newRoundFields.promotionTopN}
+                  onChange={e => setNewRoundFields(p => ({ ...p, promotionTopN: parseNumInput(e) }))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-700" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Vị trí chèn (order)</label>
+                <select
+                  value={newRoundFields.finalRound ? roundCount + 1 : clampInsertPos(newRoundFields.orderNumber)}
+                  onChange={e => setNewRoundFields(p => ({ ...p, orderNumber: Number(e.target.value) }))}
+                  disabled={newRoundFields.finalRound}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono bg-white focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50">
+                  {newRoundFields.finalRound
+                    ? <option value={roundCount + 1}>#{roundCount + 1} (cuối)</option>
+                    : insertPosOptions.map(pos => (
+                        <option key={pos} value={pos}>#{pos}{pos === roundCount + 1 ? ' (cuối)' : ''}</option>
+                      ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Live preview vị trí thực tế sau khi BE shift các round khác */}
+            <div className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2 text-xs text-slate-600">
+              Round sẽ ở vị trí <span className="font-semibold text-blue-700">#{previewInsertPos}</span>
+              {newRoundFields.finalRound
+                ? ' — final round luôn nằm cuối cùng.'
+                : hasFinalRound && previewInsertPos >= (existingFinalRound!.orderNumber ?? 0)
+                  ? ' — các round từ vị trí này (kể cả final) sẽ dời xuống 1 bậc.'
+                  : rounds.some(r => (r.orderNumber ?? 0) >= previewInsertPos)
+                    ? ' — các round từ vị trí này sẽ dời xuống 1 bậc.'
+                    : ''}
+            </div>
+
+            <div className="flex flex-wrap gap-4">
+              <label className={`flex items-center gap-1.5 ${hasFinalRound ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                title={hasFinalRound ? 'Đã có final round — event chỉ có 1 final' : undefined}>
+                <input type="checkbox" checked={!!newRoundFields.finalRound} disabled={hasFinalRound}
+                  onChange={e => setNewRoundFields(p => ({ ...p, finalRound: e.target.checked }))}
+                  className="rounded border-slate-300 disabled:opacity-50" />
+                <span className={`text-xs ${hasFinalRound ? 'text-slate-400' : 'text-slate-700'}`}>Final Round</span>
+              </label>
+              {([
+                ['requiresRepo', 'Repo URL'],
+                ['requiresDemo', 'Demo URL'],
+                ['requiresSlide', 'Slide'],
+                ['requiresReport', 'Report'],
+              ] as [keyof RoundEdit, string][]).map(([field, label]) => (
+                <label key={field} className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" checked={!!newRoundFields[field]}
+                    onChange={e => setNewRoundFields(p => ({ ...p, [field]: e.target.checked }))}
+                    className="rounded border-slate-300" />
+                  <span className="text-xs text-slate-700">{label}</span>
+                </label>
+              ))}
+            </div>
+            {hasFinalRound && (
+              <p className="text-[11px] text-amber-600">Đã có final round — event chỉ có 1 final.</p>
+            )}
+          </div>
+        </Modal>
+      )}
+
+      {/* Add Category modal — POST /api/events/{eventId}/categories */}
+      {addingCategory && (
+        <Modal title="Thêm Category" onClose={() => setAddingCategory(false)} size="sm"
+          footer={
+            <>
+              <button onClick={() => setAddingCategory(false)} disabled={savingNewCategory} className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-lg hover:bg-slate-50 disabled:opacity-50">Huỷ</button>
+              <button onClick={handleCreateCategory} disabled={savingNewCategory || !newCategory.name.trim()}
+                className="px-4 py-2 bg-blue-800 hover:bg-blue-900 text-white text-sm font-semibold rounded-lg flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                {savingNewCategory ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Thêm category
+              </button>
+            </>
+          }
+        >
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Tên category <span className="text-red-500">*</span></label>
+              <input value={newCategory.name} onChange={e => setNewCategory(p => ({ ...p, name: e.target.value }))}
+                maxLength={150} placeholder="VD: Web Application"
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Mô tả</label>
+              <textarea value={newCategory.description} onChange={e => setNewCategory(p => ({ ...p, description: e.target.value }))}
+                rows={2} placeholder="Mô tả ngắn…"
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-700" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Mentor (tùy chọn)</label>
+              <select value={newCategory.mentorId} onChange={e => setNewCategory(p => ({ ...p, mentorId: e.target.value === '' ? '' : Number(e.target.value) }))}
                 className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 bg-white">
                 <option value="">-- Chưa gán mentor --</option>
                 {mentors.map(m => <option key={m.id} value={m.id}>{m.fullName} ({m.email})</option>)}
