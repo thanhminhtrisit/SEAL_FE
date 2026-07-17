@@ -47,14 +47,34 @@ function safeArray<T>(value: T[] | null | undefined): T[] {
 }
 
 const LS_TEAM_ID = 'seal_my_team_id';
+
+// Giới hạn khớp cột DB của BE để insert không fail vì độ dài.
+const MAX_URL_LEN = 500;   // repo/demo/slide/report URL
+const MAX_NOTE_LEN = 255;  // change note
+
+// Link chỉ cần là http/https URL hợp lệ — CỐ Ý để lỏng: không ép domain cụ thể,
+// không bắt buộc domain có dấu chấm (localhost vẫn hợp lệ). Rỗng = hợp lệ (field optional).
 function isValidHttpUrl(value: string): boolean {
-  if (!value.trim()) return true;
+  const trimmed = value.trim();
+  if (!trimmed) return true;
+  // Khoảng trắng ở GIỮA URL là không hợp lệ (đã trim 2 đầu ở trên).
+  if (/\s/.test(trimmed)) return false;
   try {
-    const parsed = new URL(value.trim());
+    const parsed = new URL(trimmed);
     return parsed.protocol === 'http:' || parsed.protocol === 'https:';
   } catch {
     return false;
   }
+}
+
+// Thông báo lỗi cho MỘT ô URL. Rỗng+required → "required"; rỗng+optional → hợp lệ (''),
+// có giá trị → check độ dài rồi tới tính hợp lệ. Dùng chung cho submit handler, canSubmit và inline.
+function urlFieldError(label: string, value: string, required: boolean): string {
+  const trimmed = value.trim();
+  if (!trimmed) return required ? `${label} is required for this round` : '';
+  if (trimmed.length > MAX_URL_LEN) return `URL tối đa ${MAX_URL_LEN} ký tự`;
+  if (!isValidHttpUrl(trimmed)) return `${label} must be a valid HTTP or HTTPS URL`;
+  return '';
 }
 
 const myTeam = {
@@ -886,19 +906,22 @@ export function SubmitProject() {
   };
   const selectedDeadlinePassed = isDeadlinePassed(selectedRound?.submissionDeadline);
   const roundClosedByTime = selectedRound?.status !== 'OPEN_FOR_SUBMISSION' || selectedDeadlinePassed;
-  const requiredArtifactsPresent = !!submissionRequirements
-    && artifactFields.every(field => !!field.value.trim());
-  const artifactUrlsValid = !!submissionRequirements && [
-    { required: submissionRequirements.requiresRepo, value: repoUrl },
-    { required: submissionRequirements.requiresDemo, value: demoUrl },
-    { required: submissionRequirements.requiresSlide, value: slideUrl },
-    { required: submissionRequirements.requiresReport, value: reportUrl },
-  ].every(field => !field.required || isValidHttpUrl(field.value));
+  // Nguồn sự thật cho validation: MỌI ô URL đều được soi (không chỉ ô round yêu cầu).
+  // Ô required rỗng → lỗi "required"; ô optional có giá trị rác → cũng lỗi; ô optional rỗng → hợp lệ.
+  const urlFieldChecks = [
+    { key: 'repoUrl' as const, label: 'Repository URL', value: repoUrl, required: !!submissionRequirements?.requiresRepo },
+    { key: 'demoUrl' as const, label: 'Demo URL', value: demoUrl, required: !!submissionRequirements?.requiresDemo },
+    { key: 'slideUrl' as const, label: 'Slide URL', value: slideUrl, required: !!submissionRequirements?.requiresSlide },
+    { key: 'reportUrl' as const, label: 'Report URL', value: reportUrl, required: !!submissionRequirements?.requiresReport },
+  ];
+  const changeNoteError = changeNote.trim().length > MAX_NOTE_LEN ? `Ghi chú tối đa ${MAX_NOTE_LEN} ký tự` : '';
+  const allFieldsValid = !!submissionRequirements
+    && urlFieldChecks.every(field => !urlFieldError(field.label, field.value, field.required))
+    && !changeNoteError;
   const canSubmitNow = !!canEdit
     && !!selectedTeam
     && !!selectedRound
-    && requiredArtifactsPresent
-    && artifactUrlsValid
+    && allFieldsValid
     && !roundClosedByTime
     && actionLoading === null;
 
@@ -998,24 +1021,20 @@ export function SubmitProject() {
       setError('Submission requirements are unavailable. Reload the page or contact the coordinator.');
       return;
     }
-    const missingRequired = [
-      { required: submissionRequirements.requiresRepo, value: repoUrl, label: 'Repository URL' },
-      { required: submissionRequirements.requiresDemo, value: demoUrl, label: 'Demo URL' },
-      { required: submissionRequirements.requiresSlide, value: slideUrl, label: 'Slide URL' },
-      { required: submissionRequirements.requiresReport, value: reportUrl, label: 'Report URL' },
-    ].find(field => field.required && !field.value.trim());
-    if (missingRequired) {
-      setError(`${missingRequired.label} is required for this round`);
+    // Soi MỌI ô: required rỗng → "required"; ô nào có giá trị → phải là URL http/https hợp lệ
+    // (không có khoảng trắng giữa) và không vượt quá độ dài cột DB. Ô optional rỗng thì bỏ qua.
+    const fieldError = [
+      { required: !!submissionRequirements.requiresRepo, value: repoUrl, label: 'Repository URL' },
+      { required: !!submissionRequirements.requiresDemo, value: demoUrl, label: 'Demo URL' },
+      { required: !!submissionRequirements.requiresSlide, value: slideUrl, label: 'Slide URL' },
+      { required: !!submissionRequirements.requiresReport, value: reportUrl, label: 'Report URL' },
+    ].map(field => urlFieldError(field.label, field.value, field.required)).find(Boolean);
+    if (fieldError) {
+      setError(fieldError);
       return;
     }
-    const invalidUrl = [
-      { required: submissionRequirements.requiresRepo, value: repoUrl, label: 'Repository URL' },
-      { required: submissionRequirements.requiresDemo, value: demoUrl, label: 'Demo URL' },
-      { required: submissionRequirements.requiresSlide, value: slideUrl, label: 'Slide URL' },
-      { required: submissionRequirements.requiresReport, value: reportUrl, label: 'Report URL' },
-    ].find(field => field.required && !isValidHttpUrl(field.value));
-    if (invalidUrl) {
-      setError(`${invalidUrl.label} must be a valid HTTP or HTTPS URL`);
+    if (changeNote.trim().length > MAX_NOTE_LEN) {
+      setError(`Ghi chú tối đa ${MAX_NOTE_LEN} ký tự`);
       return;
     }
 
@@ -1335,13 +1354,8 @@ export function SubmitProject() {
                             slideUrl: 'https://drive.google.com/...',
                             reportUrl: 'https://docs.google.com/...',
                           }[key];
-                          const hasValue = !!value.trim();
-                          const validUrl = isValidHttpUrl(value);
-                          const fieldError = !hasValue
-                            ? `${label} is required for this round`
-                            : !validUrl
-                              ? `${label} must be a valid HTTP or HTTPS URL`
-                              : '';
+                          // artifactFields chỉ chứa ô round yêu cầu → required = true.
+                          const fieldError = urlFieldError(label, value, true);
                           return (
                           <div key={label}>
                             <label className="block text-sm font-medium text-slate-700 mb-1">
@@ -1352,6 +1366,7 @@ export function SubmitProject() {
                               <input
                                 type="url"
                                 required
+                                maxLength={MAX_URL_LEN}
                                 value={value}
                                 onChange={e => setter(e.target.value)}
                                 className="w-full pl-9 pr-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"
@@ -1370,9 +1385,13 @@ export function SubmitProject() {
                         <textarea
                           value={changeNote}
                           onChange={e => setChangeNote(e.target.value)}
+                          maxLength={MAX_NOTE_LEN}
                           className="w-full min-h-20 border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"
                           placeholder="Describe what changed in this submission"
                         />
+                        <p className={`mt-1 text-xs ${changeNoteError ? 'text-rose-600' : 'text-slate-500'}`}>
+                          {changeNoteError || `${changeNote.trim().length}/${MAX_NOTE_LEN} ký tự`}
+                        </p>
                       </div>
                       <div className="bg-slate-50 rounded-lg p-3 text-xs text-slate-500 flex items-start gap-2">
                         <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
