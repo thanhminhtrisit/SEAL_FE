@@ -25,13 +25,14 @@ export const notificationApi = {
   // Lấy danh sách (có phân trang)
   getMyNotifications: async (page = 0, size = 10): Promise<NotificationData[]> => {
     const res = await apiClient.get<ApiResponse<PageResponse<NotificationData>>>('/api/notifications', {
-      params: { 
-        page, 
-        size 
+      params: {
+        page,
+        size
       }
     });
     // Trả về trực tiếp mảng content
-    return res.data.data.content; 
+    return res.data.data?.content ?? []
+
   },
 
   // Lấy số lượng chưa đọc
