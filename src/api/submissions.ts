@@ -82,6 +82,32 @@ export interface CreateSubmissionRequest {
   changeNote?: string;
 }
 
+// Coordinator "Submission Monitoring" — one row per team of an event with its latest state for a round.
+// status = SubmissionStatus (SUBMITTED/LATE_REJECTED/LOCKED/DISQUALIFIED) hoặc "NOT_SUBMITTED" (sentinel).
+export interface SubmissionMonitorRow {
+  teamId: number;
+  teamName: string;
+  categoryId?: number | null;
+  categoryName?: string | null;
+  status: string;
+  latestAttemptNumber?: number | null;
+  submittedAt?: string | null;
+  repoUrl?: string | null;
+  demoUrl?: string | null;
+  slideUrl?: string | null;
+  reportUrl?: string | null;
+}
+
+export async function getRoundSubmissionMonitor(
+  eventId: number,
+  roundId: number,
+): Promise<SubmissionMonitorRow[]> {
+  const res = await apiClient.get<ApiResponse<SubmissionMonitorRow[]>>(
+    `/api/events/${eventId}/rounds/${roundId}/submissions`,
+  );
+  return res.data.data ?? [];
+}
+
 function requireData<T>(res: ApiResponse<T>, fallback: string): T {
   if (!res.data) throw new Error(res.message || fallback);
   return res.data;

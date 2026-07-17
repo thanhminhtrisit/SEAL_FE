@@ -61,6 +61,7 @@ import {
   getJudges, getRoundJudges, assignJudge, revokeJudge, createGuestJudge,
   type JudgeUser, type RoundJudge, type CreateGuestJudgeResponse,
 } from '../../api/judges';
+import { getRoundSubmissionMonitor, type SubmissionMonitorRow } from '../../api/submissions';
 
 function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: React.ReactNode }) {
   return (
@@ -127,14 +128,6 @@ const judges = [
   { id: 2, name: 'Vu Minh Phuong', email: 'phuong.vm@fpt.edu.vn', type: 'INTERNAL', round: 'Preliminary Round', category: 'All', scored: 3, total: 7 },
   { id: 3, name: 'Dr. Sarah Chen', email: 'schen@industry.com', type: 'GUEST', round: 'Final Round', category: 'All', scored: 0, total: 6 },
   { id: 4, name: 'Dr. James Park', email: 'jpark@techcorp.com', type: 'GUEST', round: 'Final Round', category: 'All', scored: 0, total: 6 },
-];
-
-const submissions = [
-  { id: 1, team: 'Code Seals', round: 'Preliminary', category: 'Web Application', repoUrl: 'github.com/codeseals/seal-webapp', demoUrl: 'seal-demo.vercel.app', slideUrl: 'drive.google.com/...', submittedAt: '2026-07-22 14:30', status: 'SUBMITTED', attemptNumber: 3 },
-  { id: 2, team: 'AlphaBot', round: 'Preliminary', category: 'AI/Automation Tool', repoUrl: 'github.com/alphabot/ai-tool', demoUrl: 'alphabot-demo.netlify.app', slideUrl: null, submittedAt: '2026-07-23 10:15', status: 'SUBMITTED', attemptNumber: 1 },
-  { id: 3, team: 'MobileFirst', round: 'Preliminary', category: 'Mobile Application', repoUrl: 'github.com/mobilefirst/app', demoUrl: null, slideUrl: 'drive.google.com/...', submittedAt: '2026-07-24 16:45', status: 'SUBMITTED', attemptNumber: 2 },
-  { id: 4, team: 'NexGen', round: 'Preliminary', category: 'Web Application', repoUrl: 'github.com/nexgen/webapp', demoUrl: 'nexgen-webapp.vercel.app', slideUrl: null, submittedAt: '2026-07-24 20:10', status: 'SUBMITTED', attemptNumber: 1 },
-  { id: 5, team: 'DataFlow', round: 'Preliminary', category: 'AI/Automation Tool', repoUrl: '', demoUrl: '', slideUrl: '', submittedAt: '—', status: 'NOT_SUBMITTED', attemptNumber: 0 },
 ];
 
 export function CoordDashboard({ onNavigate }: { onNavigate: (s: string) => void }) {
@@ -1278,35 +1271,226 @@ export function ParticipantApproval() {
   );
 }
 
+// Nhãn hiển thị thân thiện cho từng status của submission monitoring.
+const SUBMISSION_STATUS_LABEL: Record<string, string> = {
+  SUBMITTED: 'Submitted',
+  NOT_SUBMITTED: 'Not Submitted',
+  LATE_REJECTED: 'Late Rejected',
+  LOCKED: 'Locked',
+  DISQUALIFIED: 'Disqualified',
+};
+
 export function SubmissionMonitor() {
+  const [events, setEvents] = useState<EventSummary[]>([]);
+  const [loadingMeta, setLoadingMeta] = useState(true);
+
+  const [selectedEventId, setSelectedEventId] = useState<number | ''>('');
+  const [rounds, setRounds] = useState<EventRound[]>([]);
+  const [loadingRounds, setLoadingRounds] = useState(false);
+  const [selectedRoundId, setSelectedRoundId] = useState<number | ''>('');
+
+  const [rows, setRows] = useState<SubmissionMonitorRow[]>([]);
+  const [loadingRows, setLoadingRows] = useState(false);
+  const [rowsError, setRowsError] = useState<string | null>(null);
+
+  // Load events on mount, mặc định chọn event đầu tiên.
+  useEffect(() => {
+    getEvents()
+      .then(evs => {
+        const list = safeArray(evs);
+        setEvents(list);
+        if (list.length > 0) setSelectedEventId(list[0].id);
+      })
+      .catch(err => toast.error(err instanceof Error ? err.message : 'Không tải được danh sách event'))
+      .finally(() => setLoadingMeta(false));
+  }, []);
+
+  // Load rounds khi đổi event, mặc định chọn round đầu tiên.
+  useEffect(() => {
+    if (selectedEventId === '') { setRounds([]); setSelectedRoundId(''); return; }
+    setLoadingRounds(true);
+    getEventRounds(selectedEventId as number)
+      .then(roundList => {
+        const list = safeArray(roundList).sort((a, b) => (a.orderNumber ?? 0) - (b.orderNumber ?? 0));
+        setRounds(list);
+        setSelectedRoundId(list.length > 0 ? list[0].id : '');
+      })
+      .catch(err => toast.error(err instanceof Error ? err.message : 'Không tải được rounds'))
+      .finally(() => setLoadingRounds(false));
+  }, [selectedEventId]);
+
+  const loadRows = useCallback((eventId: number, roundId: number) => {
+    setLoadingRows(true);
+    setRowsError(null);
+    getRoundSubmissionMonitor(eventId, roundId)
+      .then(data => setRows(safeArray(data)))
+      .catch(err => {
+        const message = err instanceof Error ? err.message : 'Không tải được danh sách submission';
+        setRowsError(message);
+        setRows([]);
+      })
+      .finally(() => setLoadingRows(false));
+  }, []);
+
+  // Refetch submissions khi đổi event/round.
+  useEffect(() => {
+    if (selectedEventId === '' || selectedRoundId === '') { setRows([]); setRowsError(null); return; }
+    loadRows(selectedEventId as number, selectedRoundId as number);
+  }, [selectedEventId, selectedRoundId, loadRows]);
+
+  const selectedRound = rounds.find(r => r.id === selectedRoundId) ?? null;
+  const selectedEvent = events.find(e => e.id === selectedEventId) ?? null;
+
+  // ── KPI dẫn xuất client-side ──
+  const totalTeams = rows.length;
+  const submittedCount = rows.filter(r => r.status === 'SUBMITTED').length;
+  const notSubmittedCount = totalTeams - submittedCount;
+  const pendingNames = rows.filter(r => r.status !== 'SUBMITTED').map(r => r.teamName);
+  const pendingSubtitle = pendingNames.length === 0
+    ? 'Tất cả đã nộp'
+    : pendingNames.slice(0, 2).join(', ') + (pendingNames.length > 2 ? ` +${pendingNames.length - 2}` : '');
+
+  const deadline = selectedRound?.submissionDeadline ?? null;
+  const deadlineDate = deadline ? new Date(deadline) : null;
+  const daysRemaining = deadlineDate && !Number.isNaN(deadlineDate.getTime())
+    ? Math.ceil((deadlineDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+    : null;
+  const deadlineValue = deadline ? deadline.slice(0, 10) : '—';
+  const deadlineSubtitle = daysRemaining === null
+    ? 'Chưa đặt deadline'
+    : daysRemaining < 0 ? `Quá hạn ${Math.abs(daysRemaining)} ngày`
+    : daysRemaining === 0 ? 'Hết hạn hôm nay'
+    : `Còn ${daysRemaining} ngày`;
+
+  const fmtDateTime = (s?: string | null) => s ? s.replace('T', ' ').slice(0, 16) : '—';
+
+  // Một ô artifact: có url → link; thiếu mà round yêu cầu → "Missing (required)"; còn lại → "—".
+  const renderArtifact = (url: string | null | undefined, required: boolean, label: string, colorClass: string) => {
+    if (url) {
+      return (
+        <a href={url} target="_blank" rel="noopener noreferrer" className={`text-xs ${colorClass} hover:underline font-mono break-all`}>
+          {label}
+        </a>
+      );
+    }
+    return required
+      ? <span className="text-xs text-red-500">Missing (required)</span>
+      : <span className="text-xs text-slate-400">—</span>;
+  };
+
+  // ── Export CSV client-side từ rows đang hiển thị ──
+  const handleExportCsv = () => {
+    if (rows.length === 0) { toast.error('Không có dữ liệu để export'); return; }
+    const headers = ['Team', 'Category', 'Repository URL', 'Demo URL', 'Slides', 'Submitted At', 'Attempt', 'Status'];
+    const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
+    const lines = rows.map(r => [
+      r.teamName ?? '',
+      r.categoryName ?? '',
+      r.repoUrl ?? '',
+      r.demoUrl ?? '',
+      r.slideUrl ?? '',
+      fmtDateTime(r.submittedAt),
+      r.latestAttemptNumber ? `Attempt #${r.latestAttemptNumber}` : '',
+      SUBMISSION_STATUS_LABEL[r.status] ?? r.status,
+    ].map(cell => escape(String(cell))).join(','));
+    const csv = [headers.map(escape).join(','), ...lines].join('\r\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const namePart = `${selectedEvent?.name ?? 'event'}_${selectedRound?.name ?? 'round'}`.replace(/[^a-zA-Z0-9]+/g, '-');
+    a.href = url;
+    a.download = `submissions_${namePart}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const subtitle = selectedEvent && selectedRound
+    ? `${selectedRound.name} — ${selectedEvent.name}`
+    : 'Chọn event và round để theo dõi submission';
+
   return (
     <div className="p-7 space-y-5">
-      <PageHeader title="Submission Monitoring" subtitle="Preliminary Round — SEAL Hackathon Summer 2026" actions={<button className="flex items-center gap-1.5 border border-slate-200 text-slate-600 text-sm px-3 py-2 rounded-lg hover:bg-slate-50"><Download className="w-4 h-4" /> Export</button>} />
-      <div className="grid grid-cols-3 gap-4 mb-2">
-        <KPICard title="Submitted" value="4" subtitle="of 5 teams" icon={Send} accent="green" />
-        <KPICard title="Not Submitted" value="1" subtitle="DataFlow pending" icon={AlertTriangle} accent="amber" />
-        <KPICard title="Deadline" value="2026-07-25" subtitle="1 day remaining" icon={Clock} accent="red" />
+      <PageHeader
+        title="Submission Monitoring"
+        subtitle={subtitle}
+        actions={
+          <button
+            onClick={handleExportCsv}
+            disabled={rows.length === 0}
+            className="flex items-center gap-1.5 border border-slate-200 text-slate-600 text-sm px-3 py-2 rounded-lg hover:bg-slate-50 disabled:opacity-50"
+          >
+            <Download className="w-4 h-4" /> Export
+          </button>
+        }
+      />
+
+      {/* Event + Round selectors */}
+      <div className="flex gap-3 flex-wrap items-end">
+        <div className="min-w-[260px]">
+          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Event</label>
+          <select
+            value={selectedEventId}
+            onChange={e => setSelectedEventId(e.target.value === '' ? '' : Number(e.target.value))}
+            disabled={loadingMeta}
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50"
+          >
+            <option value="">{loadingMeta ? 'Đang tải…' : '— Chọn event —'}</option>
+            {events.map(ev => <option key={ev.id} value={ev.id}>{ev.name}</option>)}
+          </select>
+        </div>
+        <div className="min-w-[200px]">
+          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Round</label>
+          <select
+            value={selectedRoundId}
+            onChange={e => setSelectedRoundId(e.target.value === '' ? '' : Number(e.target.value))}
+            disabled={selectedEventId === '' || loadingRounds}
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700 disabled:opacity-50 disabled:bg-slate-50"
+          >
+            <option value="">{selectedEventId === '' ? '— Chọn event trước —' : loadingRounds ? 'Đang tải…' : '— Chọn round —'}</option>
+            {rounds.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+          </select>
+        </div>
+        {selectedRoundId !== '' && (
+          <button
+            onClick={() => loadRows(selectedEventId as number, selectedRoundId as number)}
+            disabled={loadingRows}
+            className="flex items-center gap-1.5 border border-slate-200 text-slate-600 text-sm px-3 py-2 rounded-lg hover:bg-slate-50 disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${loadingRows ? 'animate-spin' : ''}`} /> Refresh
+          </button>
+        )}
       </div>
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200">
+
+      <div className="grid grid-cols-3 gap-4 mb-2">
+        <KPICard title="Submitted" value={String(submittedCount)} subtitle={`of ${totalTeams} teams`} icon={Send} accent="green" />
+        <KPICard title="Not Submitted" value={String(notSubmittedCount)} subtitle={pendingSubtitle} icon={AlertTriangle} accent="amber" />
+        <KPICard title="Deadline" value={deadlineValue} subtitle={deadlineSubtitle} icon={Clock} accent="red" />
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
         <table className="w-full">
           <thead><tr className="border-b border-slate-100">{['Team', 'Category', 'Repository URL', 'Demo URL', 'Slides', 'Submitted At', 'Attempt', 'Status'].map(c => <th key={c} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{c}</th>)}</tr></thead>
           <tbody className="divide-y divide-slate-100">
-            {submissions.map(s => (
-              <tr key={s.id} className={`hover:bg-slate-50 transition-colors ${s.status === 'NOT_SUBMITTED' ? 'bg-amber-50/40' : ''}`}>
-                <td className="px-4 py-3 text-sm font-semibold text-slate-900">{s.team}</td>
-                <td className="px-4 py-3 text-xs text-slate-600">{s.category}</td>
-                <td className="px-4 py-3">
-                  {s.repoUrl ? <a href="#" className="text-xs text-blue-600 hover:underline font-mono">{s.repoUrl}</a> : <span className="text-xs text-red-500">Missing (required)</span>}
-                </td>
-                <td className="px-4 py-3">
-                  {s.demoUrl ? <a href="#" className="text-xs text-cyan-600 hover:underline font-mono">{s.demoUrl}</a> : <span className="text-xs text-slate-400">—</span>}
-                </td>
-                <td className="px-4 py-3">
-                  {s.slideUrl ? <a href="#" className="text-xs text-purple-600 hover:underline">View</a> : <span className="text-xs text-slate-400">—</span>}
-                </td>
-                <td className="px-4 py-3 text-xs font-mono text-slate-500">{s.submittedAt}</td>
-                <td className="px-4 py-3 text-xs font-mono text-slate-600">{s.attemptNumber ? `Attempt #${s.attemptNumber}` : '—'}</td>
-                <td className="px-4 py-3"><StatusBadge status={s.status === 'SUBMITTED' ? 'SUBMITTED' : 'PENDING'} label={s.status === 'SUBMITTED' ? 'Submitted' : 'Not Submitted'} /></td>
+            {loadingRows ? (
+              <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-400"><RefreshCw className="w-4 h-4 animate-spin inline mr-2" />Đang tải submissions…</td></tr>
+            ) : rowsError ? (
+              <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-red-500">{rowsError}</td></tr>
+            ) : selectedRoundId === '' ? (
+              <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-400">Chọn event và round để xem submission.</td></tr>
+            ) : rows.length === 0 ? (
+              <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-400">Chưa có team nào trong round này.</td></tr>
+            ) : rows.map(s => (
+              <tr key={s.teamId} className={`hover:bg-slate-50 transition-colors ${s.status === 'NOT_SUBMITTED' ? 'bg-amber-50/40' : ''}`}>
+                <td className="px-4 py-3 text-sm font-semibold text-slate-900">{s.teamName}</td>
+                <td className="px-4 py-3 text-xs text-slate-600">{s.categoryName ?? '—'}</td>
+                <td className="px-4 py-3">{renderArtifact(s.repoUrl, !!selectedRound?.requiresRepo, s.repoUrl ?? '', 'text-blue-600')}</td>
+                <td className="px-4 py-3">{renderArtifact(s.demoUrl, !!selectedRound?.requiresDemo, s.demoUrl ?? '', 'text-cyan-600')}</td>
+                <td className="px-4 py-3">{renderArtifact(s.slideUrl, !!selectedRound?.requiresSlide, 'View', 'text-purple-600')}</td>
+                <td className="px-4 py-3 text-xs font-mono text-slate-500">{fmtDateTime(s.submittedAt)}</td>
+                <td className="px-4 py-3 text-xs font-mono text-slate-600">{s.latestAttemptNumber ? `Attempt #${s.latestAttemptNumber}` : '—'}</td>
+                <td className="px-4 py-3"><StatusBadge status={s.status} label={SUBMISSION_STATUS_LABEL[s.status] ?? s.status} /></td>
               </tr>
             ))}
           </tbody>
