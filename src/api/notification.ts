@@ -17,7 +17,7 @@ export const notificationApi = {
   // Lấy danh sách (có phân trang)
   getMyNotifications: async (page = 0, size = 10): Promise<NotificationData[]> => {
     const res = await apiClient.get<ApiResponse<any>>(`/api/notifications?page=${page}&size=${size}`);
-    return res.data.data.content; // Spring Boot Page trả về mảng trong thuộc tính 'content'
+    return res.data.data?.content ?? []; // Spring Boot Page trả về mảng trong thuộc tính 'content'; data có thể null
   },
 
   // Lấy số lượng chưa đọc
