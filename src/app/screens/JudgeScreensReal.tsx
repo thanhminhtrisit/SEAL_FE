@@ -164,9 +164,14 @@ function filterAndSortAssignments(items: JudgeAssignedSubmission[], filters: Ass
     .filter(item => {
       const status = item.evaluationStatus ?? 'NOT_STARTED';
       const submittedAt = toDateMs(item.submittedAt);
-      const matchesQuery = !query || [item.teamName, item.eventName, item.roundName, item.categoryName, status]
+      
+      // FIX 1: Chuyển đổi dấu gạch dưới thành khoảng trắng để search tự nhiên hơn
+      const statusLabelForSearch = status.replace(/_/g, ' ');
+
+      const matchesQuery = !query || [item.teamName, item.eventName, item.roundName, item.categoryName, statusLabelForSearch]
         .filter(Boolean)
         .some(text => String(text).toLowerCase().includes(query));
+      
       return matchesQuery
         && (filters.eventName === 'ALL' || item.eventName === filters.eventName)
         && (filters.roundName === 'ALL' || item.roundName === filters.roundName)
@@ -215,9 +220,17 @@ function AssignmentFilterBar({
   filters: AssignmentFilters;
   onChange: (patch: Partial<AssignmentFilters>) => void;
 }) {
+  // FIX 2: Danh sách Event luôn lấy toàn bộ
   const eventOptions = uniqueSorted(items.map(item => item.eventName));
-  const roundOptions = uniqueSorted(items.map(item => item.roundName));
-  const categoryOptions = uniqueSorted(items.map(item => item.categoryName));
+  
+  // Lọc items dựa trên Event đang chọn để thu hẹp Round và Category
+  const itemsInSelectedEvent = filters.eventName === 'ALL' 
+    ? items 
+    : items.filter(item => item.eventName === filters.eventName);
+
+  // Round và Category chỉ hiển thị các option thuộc Event đang chọn
+  const roundOptions = uniqueSorted(itemsInSelectedEvent.map(item => item.roundName));
+  const categoryOptions = uniqueSorted(itemsInSelectedEvent.map(item => item.categoryName));
 
   return (
     <div className="grid grid-cols-4 gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -227,18 +240,31 @@ function AssignmentFilterBar({
         placeholder="Search team, event, round..."
         className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-700"
       />
-      <select value={filters.eventName} onChange={e => onChange({ eventName: e.target.value })} className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white">
+      
+      {/* FIX 3: Reset Round và Category về 'ALL' khi Event thay đổi */}
+      <select 
+        value={filters.eventName} 
+        onChange={e => onChange({ 
+          eventName: e.target.value,
+          roundName: 'ALL',
+          categoryName: 'ALL'
+        })} 
+        className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white"
+      >
         <option value="ALL">All events</option>
         {eventOptions.map(option => <option key={option} value={option}>{option}</option>)}
       </select>
+      
       <select value={filters.roundName} onChange={e => onChange({ roundName: e.target.value })} className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white">
         <option value="ALL">All rounds</option>
         {roundOptions.map(option => <option key={option} value={option}>{option}</option>)}
       </select>
+      
       <select value={filters.categoryName} onChange={e => onChange({ categoryName: e.target.value })} className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white">
         <option value="ALL">All categories</option>
         {categoryOptions.map(option => <option key={option} value={option}>{option}</option>)}
       </select>
+      
       <select value={filters.status} onChange={e => onChange({ status: e.target.value })} className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white">
         <option value="ALL">All statuses</option>
         <option value="NOT_STARTED">Not started</option>
@@ -264,6 +290,7 @@ function AssignmentFilterBar({
     </div>
   );
 }
+
 
 type AuditFilterState = {
   action: 'ALL' | 'SCORE' | 'EVALUATION' | 'COMMENT';

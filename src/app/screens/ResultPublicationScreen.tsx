@@ -239,8 +239,8 @@ export const ResultPublicationScreen: React.FC<ResultPublicationProps> = ({ even
                 </div>
               ) : teams.length > 0 ? (
                 teams.map((team) => {
-                  // Tìm xem đội này có giải thưởng nào không
-                  const teamAward = awards.find(a => a.teamId === team.teamId);
+                  // Lấy ra TẤT CẢ giải thưởng của đội
+                  const teamAwards = awards.filter(a => a.teamId === team.teamId);
 
                   return (
                     <div key={team.teamId} className="flex items-center gap-4 p-3 rounded-lg border border-slate-100 hover:bg-slate-50 transition-colors">
@@ -248,13 +248,19 @@ export const ResultPublicationScreen: React.FC<ResultPublicationProps> = ({ even
                         {team.rankPosition}
                       </div>
                       <div className="flex-1">
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-3 flex-wrap">
                           <p className="font-semibold text-slate-900 text-sm">{team.teamName}</p>
-                          {teamAward && (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700 border border-amber-200">
-                              <Trophy className="w-3.5 h-3.5" />
-                              {formatAwardType(teamAward.awardType)}
-                            </span>
+                          
+                          {/* Render danh sách giải thưởng bằng .map() */}
+                          {teamAwards.length > 0 && (
+                            <div className="flex flex-wrap items-center gap-2">
+                              {teamAwards.map((award, index) => (
+                                <span key={`${team.teamId}-${award.awardType}-${index}`} className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700 border border-amber-200">
+                                  <Trophy className="w-3.5 h-3.5" />
+                                  {formatAwardType(award.awardType)}
+                                </span>
+                              ))}
+                            </div>
                           )}
                         </div>
                         <p className="text-xs text-slate-500 mt-0.5">ID Đội: #{team.teamId}</p>

@@ -177,16 +177,21 @@ export function ParticipantResultScreen() {
         // Fetch Score Breakdown
         const breakdownRows = await ranking.getScoreBreakdown(team.teamId, selectedRoundId).catch(() => []);
 
-        // Optional: Fetch Award if this is a Final Round
         let awardType = null;
-        const isFinalRound = round.isFinalRound === true;
-        if (isFinalRound) {
+        
+        // Cập nhật "Chốt chặn 3 lớp" lên đây để dùng cho cả việc fetch API
+        const roundNameLower = (round.roundName || '').toLowerCase();
+        const isFinalRoundCheck = 
+          round.isFinalRound === true || 
+          (round as any).finalRound === true || 
+          (roundNameLower.includes('final') && !roundNameLower.includes('semi'));
+
+        if (isFinalRoundCheck) {
           try {
             const awardData = await award.getMyResult(Number(selectedEventId));
             awardType = awardData?.awardType || null;
           } catch (e) {
-            // Ignore award fetch error if not assigned yet
-          }
+            console.error("Lỗi khi lấy kết quả giải thưởng:", e);}
         }
 
         if (isMounted) {
